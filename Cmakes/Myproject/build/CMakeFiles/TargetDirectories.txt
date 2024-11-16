@@ -1,0 +1,8 @@
+/home/sun/Wnotes/Cmakes/Myproject/build/CMakeFiles/edit_cache.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/CMakeFiles/rebuild_cache.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/src/CMakeFiles/MyLib.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/src/CMakeFiles/MyExecutable.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/src/CMakeFiles/edit_cache.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/src/CMakeFiles/rebuild_cache.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/tests/CMakeFiles/edit_cache.dir
+/home/sun/Wnotes/Cmakes/Myproject/build/tests/CMakeFiles/rebuild_cache.dir
