@@ -2502,7 +2502,7 @@ DCD结构就分析到这里，在分析IVT的时候我们就已经说过了，DC
 
     IVT:一系列地址信息，包含镜像程序的入口点、指向DCD的指针和一些用作其它用途的指针
     BootData：镜像拷贝地址，大小等镜像信息
-    DCD：初始化设备的寄存器配置
+    DCD：初始化设备的寄存器配置(包含例如DDR设备的初始化配置)
     代码主体
 
 #### 9.4.3 补充Bootloader与BootROM
@@ -2676,4 +2676,1225 @@ Bootloader存储：
 注意：
 BootROM是不可修改的，固化在芯片中的。
 而Bootloader存在于Flash或者ROM中，他是可以修改的，可以对Bootloader进行固件更新。
+
+**再注意Bootloader不是一个固化的程序，IMX6ull中移植Uboot是一个Bootloader，STM32中内嵌的串口下载模式也是Bootloader。**
+
+## 第十章 C语言LED灯代码
+
+第八章我们讲解了如何用汇编语言编写LED灯实验，但是实际开发过程中汇编用的很少，大部分都是 C语言开发，汇编只是用来完成 C语言环境的初始化。
+本章我们就来学习如何用汇编来完成 C语言环境的初始化工作，然后从汇编跳转到 C语言代码里面去。
+(这里的c语言环境指的是执行编译器编译出的C语言代码的环境，SP指针初始化等，STM32中也需要这个汇编文件)
+
+### 10.1 C语言LED灯简介
+
+第八章的汇编 LED灯实验中，我们讲解了如何使用汇编来编写 LED灯驱动，实际工作中是很少用到汇编去写嵌入式驱动的，毕竟汇编太难，而且写出来也不好理解，大部分情况下都是使用 C语言去编写的。
+
+只是在开始部分用汇编来初始化一下 C语言环境，比如初始化 DDR、设置堆栈指针 SP等等，当这些工作都做完以后就可以进入 C语言环境，也就是运行 C语言代码，一般都是进入 main函数。
+
+所以我们有两部分文件要做：
+①、汇编文件  
+汇编文件只是用来完成 C语言环境搭建。
+
+②、 C语言文件 
+C语言文件就是完成我们的业务层代码的，其实就是我们实际例程要完成的功能。
+
+其实STM32也是这样的，只是我们在开发 STM32的时候没有想到这一点，以 STM32F103为例，其启动文件 startup_stm32f10x_hd.s这个汇编文件就是完成 C语言环境搭建的，当然还有一些其他的处理，比如中断向量表等等。
+
+当 startup_stm32f10x_hd.s把 C语言环境初始化 完成以后就会进入 C语言环境。
+
+### 10.2 硬件原理分析
+
+只有一个LED0
+
+### 10.3 实验程序编写
+
+本实验对应的例程路径为： 
+开发板光盘 -> 1、例程源码 ->1、裸机例程 ->2_ledc。
+
+新建VScode工程，工程名字为“ ledc”，新建三个文件 start.S、 main.c和 main.h。
+其中 start.S是汇编文件， main.c和 main.h是 C语言相关文件。
+
+#### 10.3.1 汇编程序编写
+
+在 STM32中，启动文件 startup_stm32f10x_hd.s就是完成 C语言环境搭建的，当然还有一些其他的处理，比如中断向量表等等。 
+startup_stm32f10x_hd.s中堆栈初始化代码如下所示：
+```s
+1 Stack_Size EQU 0x00000400 
+2 
+3 AREA STACK, NOINIT, READWRITE, ALIGN=3 
+4 Stack_Mem SPACE Stack_Size 
+5 __initial_sp 
+6 
+7 ; <h> Heap Configuration 
+8 ; <o> Heap Size (in Bytes) <0x0-0xFFFFFFFF:8> 
+9 ; </h> 
+10 
+11 Heap_Size EQU 0x00000200 
+12 
+13 AREA HEAP, NOINIT, READWRITE, ALIGN=3 
+14 __heap_base 
+15 Heap_Mem SPACE Heap_Size
+16 __heap_limit 
+17 *******************省略掉部分代码*********************** 
+18 Reset_Handler PROC 
+19 EXPORT Reset_Handler [WEAK] 
+20 IMPORT __main 
+21 IMPORT SystemInit 
+22 LDR R0, =SystemInit 
+23 BLX R0 
+24 LDR R0, =__main 
+25 BX R0 
+26 ENDP
+```
+第 1行代码就是设置栈大小，这里是设置为 0X400 4*16^2 即2^10=1024B
+第 5行的 __initial_sp就是初始化 SP指针。
+第 11行是设置堆大小。 0x200 2*16^2 即2^9 = 512B
+第 18行是复位中断服务函数， STM32复位完成以后会执行此中断服务函数。
+第 22行调用 SystemInit()函数来完成其他初始化工作。
+第 24行调用 __main，，__main是库函数，其会调用 main()函数。
+
+I.MX6U的汇编部分代码和 STM32的启动文件 startup_stm32f10x_hd.s基本类似的，只是本实验我们不考虑中断向量表，只考虑初始化 C环境即可。
+在前面创建的 start.s中输入如下代码：
+```s
+1  .global _start       /* 全局标号 */ 
+2   
+3  /* 
+4   * 描述： _start函数，程序从此函数开始执行，此函数主要功能是设置C 
+5   *        运行环境。 
+6   */ 
+7  _start: 
+8   
+9    /* 进入SVC模式 */ 
+10   mrs r0, cpsr 
+11   bic r0, r0, #0x1f   /* 将r0的低5位清零，也就是cpsr的M0~M4    */ 
+12   orr r0, r0, #0x13   /* r0或上0x13,表示使用SVC模式             */ 
+13   msr cpsr, r0         /* 将r0 的数据写入到cpsr_c中          */ 
+14  
+15   ldr sp, =0X80200000  /* 设置栈指针             */ 
+16   b main               /* 跳转到main函数       */  
+```
+第1行定义了一个全局标号_start。
+第7行就是标号_start开始的地方，相当于是一个_start函数，这个_start就是第一行代码。
+第10~13行就是设置处理器进入SVC模式，在6.2小节的“Cortex-A处理器运行模型”中我们说过Cortex-A有九个运行模型，这里我们设置处理器运行在SVC模式下。（超级管理员模式，供内核使用）
+处理器模式的设置是通过修改CPSR(程序状态)寄存器来完成的，在6.3.2小节中我们详细的讲解了CPSR寄存器，其中M[4:0](CPSR的bit[4:0])就是设置处理器运行模式的，参考表6.3.2.2，如果要将处理器设置为SVC模式，那么M[4:0]就要等于0X13。
+11~13行代码就是先使用指令MRS将CPSR寄存器的值读取到R0中，然后修改R0中的值，设置R0的bit[4:0]为0X13，然后再使用指令MSR将修改后的R0重新写入到CPSR中。
+
+第15行通过ldr指令设置SVC模式下的SP指针=0X80200000。
+因为I.MX6U-ALPHA开发板上的DDR3地址范围是0X80000000~0XA0000000(512MB)或者
+0X80000000~0X90000000(256MB)，不管是512MB版本还是256MB版本的，其DDR3起始地
+址都是0X80000000。
+
+由于Cortex-A7的堆栈是向下增长的，所以将SP指针设置为0X80200000，因此SVC模式的栈大小0X80200000-0X80000000=0X200000=2MB，2MB的栈空间已经很大了，如果做裸机开发的话绰绰有余。 (SP指针开辟用户空间，第一个即为main函数)
+
+补充一个地址换算：
+
+    现代计算机普遍以1B为存储单元故而
+    0X200000=2*16^5 即2^21 B
+    2^21 B = 2 *2^20 即2MB
+
+第16行就是跳转到main函数，main函数就是C语言代码了
+
+至此汇编部分程序执行完成，就几行代码，用来设置处理器运行到SVC模式下、然后初始化SP指针、最终跳转到C文件的main函数中。
+如果有玩过三星的S3C2440或者S5PV210的话会知道我们在使用SDRAM或者DDR之前必须先初始化SDRAM或者DDR。
+所以S3C2440或者S5PV210的汇编文件里面是一定会有SDRAM或者DDR初始化代码的。
+我们上面编写的start.s文件中却没有初始化DDR3的代码，但是却将SVC模式下的SP指针设置到了DDR3的地址范围中，这不会出问题吗？
+肯定不会的，DDR3肯定是要初始化的，但是不需要在start.s文件中完成。在9.4.2小节里面分析DCD数据的时候就已经讲过了，DCD数据包含了DDR配置参数，I.MX6U内部的Boot ROM会读取DCD数据中的DDR配置参数然后完成DDR初始化的。 
+
+#### 10.3.2 C语言代码编写
+
+C语言部分有两个文件main.c和main.h，main.h里面主要是定义的寄存器地址，在main.h里面输入代码：
+
+```C
+#ifndef __MAIN_H 
+#define __MAIN_H 
+
+/*  
+ * CCM相关寄存器地址  
+ */ 
+#define CCM_CCGR0             *((volatile unsigned int *)0X020C4068) 
+#define CCM_CCGR1             *((volatile unsigned int *)0X020C406C) 
+#define CCM_CCGR2             *((volatile unsigned int *)0X020C4070) 
+#define CCM_CCGR3             *((volatile unsigned int *)0X020C4074) 
+#define CCM_CCGR4             *((volatile unsigned int *)0X020C4078) 
+#define CCM_CCGR5             *((volatile unsigned int *)0X020C407C) 
+#define CCM_CCGR6             *((volatile unsigned int *)0X020C4080) 
+ 
+/*  
+ * IOMUX相关寄存器地址  
+ */ 
+#define SW_MUX_GPIO1_IO03 *((volatile unsigned int *)0X020E0068) 
+#define SW_PAD_GPIO1_IO03    *((volatile unsigned int *)0X020E02F4) 
+ 
+/*  
+ * GPIO1相关寄存器地址  
+ */ 
+#define GPIO1_DR              *((volatile unsigned int *)0X0209C000) 
+#define GPIO1_GDIR           *((volatile unsigned int *)0X0209C004) 
+#define GPIO1_PSR             *((volatile unsigned int *)0X0209C008) 
+#define GPIO1_ICR1            *((volatile unsigned int *)0X0209C00C) 
+#define GPIO1_ICR2            *((volatile unsigned int *)0X0209C010) 
+#define GPIO1_IMR             *((volatile unsigned int *)0X0209C014) 
+#define GPIO1_ISR             *((volatile unsigned int *)0X0209C018) 
+#define GPIO1_EDGE_SEL       *((volatile unsigned int *)0X0209C01C) 
+ 
+#endif 
+```
+在main.h中我们以宏定义的形式定义了要使用到的所有寄存器，后面的数字就是其地址，比如CCM_CCGR0寄存器的地址就是0X020C4068
+(CCM CLOCK CONTROL MODULE)
+
+接下来编写main.c文件
+
+```C
+
+#include "main.h" 
+
+/* 
+ * @description : 使能I.MX6U所有外设时钟 
+ * @param       : 无 
+ * @return      : 无 
+ */ 
+void clk_enable(void) 
+{ 
+    CCM_CCGR0 = 0xffffffff; 
+    CCM_CCGR1 = 0xffffffff; 
+    CCM_CCGR2 = 0xffffffff; 
+    CCM_CCGR3 = 0xffffffff; 
+    CCM_CCGR4 = 0xffffffff; 
+    CCM_CCGR5 = 0xffffffff; 
+    CCM_CCGR6 = 0xffffffff; 
+} 
+
+/* 
+ * @description : 初始化LED对应的GPIO 
+ * @param       : 无 
+ * @return      : 无 
+ */ 
+void led_init(void) 
+{ 
+    /* 1、初始化IO复用, 复用为GPIO1_IO03 */ 
+    SW_MUX_GPIO1_IO03 = 0x5;    
+
+    /* 2、配置GPIO1_IO03的IO属性   
+     *bit 16:0 HYS关闭 
+     *bit [15:14]: 00 默认下拉 
+     *bit [13]: 0 kepper功能 
+     *bit [12]: 1 pull/keeper使能 
+     *bit [11]: 0 关闭开路输出 
+     *bit [7:6]: 10 速度100Mhz 
+     *bit [5:3]: 110 R0/6驱动能力 
+     *bit [0]: 0 低转换率 
+     */ 
+    SW_PAD_GPIO1_IO03 = 0X10B0;      
+
+    /* 3、初始化GPIO, GPIO1_IO03设置为输出 */ 
+    GPIO1_GDIR = 0X0000008;  
+
+    /* 4、设置GPIO1_IO03输出低电平，打开LED0 */ 
+    GPIO1_DR = 0X0; 
+} 
+
+/* 
+ * @description : 打开LED灯 
+ * @param       : 无 
+ * @return      : 无 
+ */ 
+void led_on(void) 
+{ 
+    /*  
+     * 将GPIO1_DR的bit3清零   
+     */ 
+    GPIO1_DR &= ~(1<<3);  
+    // 1111 1011 与等于 清零
+    // 0000 0100 或等于 置位1
+} 
+
+/* 
+ * @description : 关闭LED灯 
+ * @param       : 无 
+ * @return      : 无 
+ */ 
+void led_off(void) 
+{ 
+    /*     
+     * 将GPIO1_DR的bit3置1 
+     */ 
+    GPIO1_DR |= (1<<3); 
+} 
+
+/* 
+ * @description : 短时间延时函数 
+ * @param - n   : 要延时循环次数(空操作循环次数，模式延时) 
+ * @return      : 无 
+ */ 
+void delay_short(volatile unsigned int n) 
+{ 
+    while(n--){}
+} 
+
+/* 
+ * @description : 延时函数,在396Mhz的主频下延时时间大约为1ms 
+ * @param - n   : 要延时的ms数 
+ * @return      : 无 
+ */ 
+void delay(volatile unsigned int n) 
+{ 
+    while(n--) 
+    { 
+        delay_short(0x7ff); 
+    } 
+} 
+
+/* 
+ * @description : main函数 
+ * @param        : 无 
+ * @return    : 无 
+ */ 
+int main(void) 
+{ 
+    clk_enable();     /* 使能所有的时钟     */ 
+    led_init();       /* 初始化led          */ 
+
+    while(1)           /* 死循环              */ 
+    {    
+        led_off();    /* 关闭LED            */ 
+        delay(500);   /* 延时大约500ms      */ 
+
+        led_on();      /* 打开LED            */ 
+        delay(500);   /* 延时大约500ms      */ 
+    } 
+
+    return 0; 
+}
+```
+
+解释：
+main.c文件里面一共有7个函数，这7个函数都很简单。
+clk_enable函数是使能CCGR0~CCGR6所控制的所有外设时钟。
+led_init函数是初始化LED灯所使用的IO，包括设置IO的复用功能、IO的属性配置和GPIO功能，最终控制GPIO输出低电平来打开LED灯。
+led_on和led_off这两个函数看名字就知道，用来控制LED灯的亮灭的。
+delay_short()和delay()这两个函数是延时函数，delay_short()函数是靠空循环来实现延时的，delay()是对delay_short()的简单封装，在I.MX6U工作在396MHz(Boot ROM设置的396MHz)的主频的时候delay_short(0x7ff)基本能够实现大约1ms的延时，所以delay()函数我们可以用来完成ms延时。
+
+main 函数就是我们的主函数了，在main函数中先调用函数clk_enable()和led_init()来完成时钟使能和LED初始化，最终在while(1)循环中实现LED循环亮灭，亮灭时间大约是500ms。
+
+### 10.4 编译下载
+
+#### 10.4.1 编写Makefile
+
+编写Makefile文件
+
+```makefile
+  objs := start.o main.o 
+  
+  ledc.bin:$(objs) 
+   arm-linux-gnueabihf-ld -Ttext 0X87800000 -o ledc.elf $^ 
+   arm-linux-gnueabihf-objcopy -O binary -S ledc.elf $@ 
+   arm-linux-gnueabihf-objdump -D -m arm ledc.elf > ledc.dis 
+
+  %.o:%.s 
+   arm-linux-gnueabihf-gcc -Wall -nostdlib -c  -o $@ $< 
+
+  %.o:%.S 
+   arm-linux-gnueabihf-gcc -Wall -nostdlib -c  -o $@ $< 
+
+  %.o:%.c 
+   arm-linux-gnueabihf-gcc -Wall -nostdlib -c  -o $@ $< 
+
+  clean: 
+   rm -rf *.o ledc.bin ledc.elf ledc.dis 
+```
+![alt](./images/Snipaste_2024-11-24_15-04-01.png)
+
+Makefile解释：
+第1行定义了一个变量objs，objs包含着要生成ledc.bin所需的材料：start.o和main.o。
+也就是当前工程下的start.s和main.c这两个文件编译后的.o文件。
+这里要注意start.o一定要放到最前面！
+因为在后面链接的时候start.o要在最前面，因为start.o是最先要执行的文件！ 
+
+第3行就是默认目标，目的是生成最终的可执行文件ledc.bin，ledc.bin依赖start.o和main.o
+如果当前工程没有start.o 和 main.o 的时候就会找到相应的规则去生成 start.o 和 main.o。比如start.o 是 start.s 文件编译生成的，因此会执行第8行的规则。
+
+第4行是使用arm-linux-gnueabihf-ld 进行链接，链接起始地址是0X87800000，但是这一行用到了自动变量“$^”，“$^”的意思是所有依赖文件的集合，在这里就是 objs 这个变量的值：start.o 和 main.o。
+此行类似为：
+`arm-linux-gnueabihf-ld -Ttext 0X87800000 -o ledc.elf start.o main.o`
+-tText指定链接地址，-o制定生成的文件名字
+
+第5行使用arm-linux-gnueabihf-objcopy 来将 ledc.elf 文件转为 ledc.bin，本行也用到了自动变量“$@”，“$@”的意思是目标集合，在这里就是“ledc.bin”，那么本行就相当于：
+`arm-linux-gnueabihf-objcopy -O binary -S ledc.elf ledc.bin`
+-O指定输出格式为二进制
+-S表示不保留重定位等信息
+
+第6行使用arm-linux-gnueabihf-objdump 来反汇编，生成ledc.dis 文件
+-D 表示反汇编所有的段
+-m arm 指定目标架构为arm
+
+第8~15 行就是针对不同的文件类型将其编译成对应的.o文件，其实就是汇编.s(.S)和.c 文件，比如start.s 就会使用第8行的规则来生成对应的start.o文件。
+第9行就是具体的命令，这行也用到了自动变量“$@”和“$<”，其中“$<”的意思是依赖目标集合的第一个文件。
+示例：
+```makefile
+start.o:start.s 
+    arm-linux-gnueabihf-gcc -Wall -nostdlib -c -O2 -o start.o start.s 
+```
+其中-nostdlib表示不适用标准库链接
+-O2表示对代码进行优化，提高程序的执行效率，2代表优化等级
+
+第17行就是工程清理规则，通过命令“make clean”就可以清理工程。
+
+到此为止我们就可以进行测试了。
+测试成功
+#### 10.4.2 链接脚本
+在上面的Makefile中我们链接代码的时候使用如下语句：
+`arm-linux-gnueabihf-ld -Ttext 0X87800000 -o ledc.elf $^ `
+上面语句中我们是通过“-Ttext”来指定链接地址是0X87800000的，这样的话所有的文件都会链接到以0X87800000 为起始地址的区域。
+
+但是有时候我们很多文件需要链接到指定的区域，或者叫做段里面，比如在Linux里面初始化函数就会放到init段里面。
+
+因此我们需要能够自定义一些段，这些段的起始地址我们可以自由指定，同样的我们也可以指定一个文件或者函数应该存放到哪个段里面去。
+
+要完成这个功能我们就需要使用到链接脚本，看名字就知道链接脚本主要用于链接的，用于描述文件应该如何被链接在一起形成最终的可执行文件。
+
+其主要目的是描述输入文件中的段如何被映射到输出文件中，并且控制输出文件中的内存排布。比如我们编译生成的文件一般都包含text段、data段等等。
+
+链接脚本的语法很简单，就是编写一系列的命令，这些命令组成了链接脚本，每个命令是一个带有参数的关键字或者一个对符号的赋值，可以使用分号分隔命令（KEY：Value）。像文件名之类的字符串可以直接键入，也可以使用通配符“*”。
+
+最简单的链接脚本可以只包含一个命令“SECTIONS”,我们可以在这一个“SECTIONS”里面来描述输出文件的内存布局。
+我们一般编译出来的代码都包含在text、data、bss 和 rodata 这四个段内，假设现在的代码要被链接到0X10000000 这个地址，数据要被链接到0X30000000这个地方，下面就是完成此功能的最简单的链接脚本：
+
+![alt](./images/Snipaste_2024-11-24_15-29-19.png)
+
+```C
+1 SECTIONS{ 
+2   . = 0X10000000; 
+3   .text : {*(.text)} 
+4   . = 0X30000000; 
+5   .data ALIGN(4) : { *(.data) }      
+6   .bss ALIGN(4)  : { *(.bss) }     
+7 } 
+```
+第1行我们先写了一个关键字“SECTIONS”，后面跟了一个大括号，这个大括号和第7行的大括号是一对，这是必须的。看起来就跟C语言里面的函数一样。 
+
+第2行对一个特殊符号“.”进行赋值，“.”在链接脚本里面叫做**定位计数器**，默认的定位计数器为0。
+我们要求代码链接到以0X10000000 为起始地址的地方，因此这一行给“.”赋值0X10000000，表示以 0X10000000 开始，后面的文件或者段都会以 0X10000000 为起始地址开始链接。
+
+第3 行的“.text”是段名，后面的冒号是语法要求，冒号后面的大括号里面可以填上要链接到“.text”这个段里面的所有文件，“*(.text)”中的“*”是通配符，表示所有输入文件的.text段都放到“.text”中。
+
+第4行，我们的要求是数据放到0X30000000开始的地方，所以我们需要重新设置定位计数器“.”，将其改为0X30000000。
+如果不重新设置的话会怎么样？假设“.text”段大小为0X10000，那么接下来的.data 段开始地址就是 0X10000000+0X10000=0X10010000，这明显不符合我们的要求。所以我们必须调整定位计数器为0X30000000。 
+
+第5行跟第3行一样，定义了一个名为“.data”的段，然后所有文件的“.data”段都放到
+这里面。
+但是这一行多了一个“ALIGN(4)”，这是什么意思呢？这是用来对“.data”这个段的起始地址做字节对齐的，ALIGN(4)表示4字节对齐。也就是说段“.data”的起始地址要能被4整除，一般常见的都是ALIGN(4)或者ALIGN(8)，也就是4字节或者8字节对齐。
+
+第6行定义了一个“.bss”段，所有文件中的“.bss”数据都会被放到这个里面，“.bss”数据就是那些定义了但是没有被初始化的变量。
+
+上面就是链接脚本最基本的语法格式，我们接下来就按照这个基本的语法格式来编写我们本试验的链接脚本，我们本试验的链接脚本要求如下：
+①、链接起始地址为0X87800000。 
+②、start.o 要被链接到最开始的地方，因为start.o里面包含这第一个要执行的命令。
+
+现在开始编写：
+在Makefile同目录下新建一个名为“imx6ul.lds”的文件，然后在此文件里面输入如下所示代码：
+
+```C
+1  SECTIONS{ 
+2    . = 0X87800000; 
+3    .text : 
+4    { 
+5        start.o  
+6        main.o  
+7        *(.text) 
+8    } 
+9    .rodata ALIGN(4) : {*(.rodata*)}      
+10   .data ALIGN(4)   : { *(.data) }     
+11   __bss_start = .;     
+12   .bss ALIGN(4)  : { *(.bss)  *(COMMON) }     
+13   __bss_end = .; 
+14 } 
+```
+第 2 行设置定位计数器为0X87800000，因为我们的链接地址就是0X87800000。
+第 5行设置链接到开始位置的文件为start.o，因为start.o 里面包含着第一个要执行的指令，所以一定要链接到最开始的地方。
+第6行是main.o这个文件，其实可以不用写出来，因为main.o的位置就无所谓了，可以由编译器自行决定链接位置。
+
+在第11、13行有“__bss_start”和“__bss_end”这两个东西？
+这个是什么呢？
+“__bss_start”和“__bss_end”是符号，第11、13这两行其实就是对这两个符号进行赋值，其值为定位符“.”，这两个符号用来保存.bss 段的起始地址和结束地址。
+前面说了.bss 段是定义了但是没有被初始化的变量，我们需要手动对.bss段的变量清零的，因此我们需要知道.bss段的起始和结束地址，这样我们直接对这段内存赋0即可完成清零。
+
+通过第11、13行代码，.bss段的起始地址和结束地址就保存在了“__bss_start”和“__bss_end”中，我们就可以直接在汇编或者 C 文件里面使用这两个符号。
+
+补充解释：
+.rodata ALIGN(4) : {*(.rodata*)}
+
+    .rodata：定义一个只读数据段，通常用于存储只读数据，如字符串常量和 const 修饰的变量。
+    ALIGN(4)：指定该段的起始地址必须是 4 字节对齐。这意味着 .rodata 段的起始地址必须是 4 的整数倍。这样做的目的是提高内存访问效率，因为许多处理器在访问对齐的内存地址时性能更好。
+    {*(.rodata*)}：将所有输入文件中名称匹配 .rodata* 的段内容放入这个 .rodata 段。* 是通配符，表示匹配所有以 .rodata 开头的段。
+
+#### 10.4.3 修改Makefile
+
+在上一小节中我们已经编写好了链接脚本文件：imx6ul.lds，我们肯定是要使用这个链接脚本文件的，将Makefile中的如下一行代码：
+`arm-linux-gnueabihf-ld -Ttext 0X87800000 -o ledc.elf $^`
+改为
+`arm-linux-gnueabihf-ld -Timx6ul.lds -o ledc.elf $^ `
+
+-Ttext 是一个链接器选项，用于指定代码段（.text 段）的起始地址。
+这个选项通在嵌入式系统开发中使用，因为在这些系统中，开发者需要精确控制程序内存中的布局。
+
+我们的修改，其实就是将-T 后面的 0X87800000 改为 imx6ul.lds，表示使用 imx6ul.lds 这个链接脚本文件。
+修改完成以后使用新的Makefile和链接脚本文件重新编译工程，编译成功以后就可以烧写到SD卡中验证了。
+
+#### 10.4.4 下载验证
+
+使用软件imxdownload将编译出来的ledc.bin烧写到SD卡中即可。
+
+## 第十一章 模仿STM32驱动开发格式实验
+
+在上一章使用C语言编写LED灯驱动的时候，每个寄存器的地址我们都需要写宏定义，使用起来非常的不方便。
+我们在学习STM32的时候，可以使用“GPIOB->ODR”这种方式来给GPIOB 的寄存器ODR赋值，因为在STM32中同属于一个外设的所有寄存器地址基本是相邻的(有些会有保留寄存器)。
+因此我们可以借助C语言里面的结构体成员地址递增的特点来将某个外设的所有寄存器写入到一个结构体里面，然后定义一个结构体指针指向这个外设的寄存器基地址，这样我们就可以通过这个结构体指针来访问这个外设的所有寄存器。
+同理，I.MX6U也可以使用这种方法来定义外设寄存器，本章我们就模仿 STM32 里面的寄存器定义方式来编写I.MX6U 的驱动，通过本章的学习也可以对STM32的寄存器定义方式有一个深入的认识。
+
+### 11.1 模仿STM32寄存器定义
+
+#### 11.1.1 STM32寄存器定义
+
+为了开发方便，ST官方为STM32F103编写了一个叫做stm32f10x.h的文件，在这个文件里面定义了STM32F103所有外设寄存器，我们可以使用其定义的寄存器来进行开发，比如我们可以用如下代码来初始化一个GPIO：
+```C
+GPIOE->CRL&=0XFF0FFFFF; 
+GPIOE->CRL|=0X00300000;  //PE5推挽输出 
+GPIOE->ODR|=1<<5;        //PE5输出高 
+```
+上述代码是初始化STM32的PE5这个GPIO为推挽输出，需要配置的就是GPIOE的寄存器CRL和ODR， “GPIOE”的定义：
+`#define GPIOE               ((GPIO_TypeDef *) GPIOE_BASE) `
+可以看出“GPIOE”是个宏定义，是一个指向地址GPIOE_BASE的结构体指针，结构体为GPIO_TypeDef，GPIO_TypeDef和GPIOE_BASE的定义如下：
+```C
+typedef struct 
+{ 
+  __IO uint32_t CRL; 
+  __IO uint32_t CRH; 
+  __IO uint32_t IDR; 
+  __IO uint32_t ODR; 
+  __IO uint32_t BSRR; 
+  __IO uint32_t BRR; 
+  __IO uint32_t LCKR; 
+} GPIO_TypeDef; 
+ 
+#define GPIOE_BASE             (APB2PERIPH_BASE + 0x1800) 
+#define APB2PERIPH_BASE        (PERIPH_BASE + 0x10000) 
+#define PERIPH_BASE           ((uint32_t)0x40000000) 
+```
+GPIO_TypeDef是个结构体，结构体里面的成员变量有CRL、CRH、IDR、ODR、BSRR、BRR和LCKR，这些都是GPIO的寄存器，每个成员变量都是32位(4字节)，这些寄存
+器在结构体中的位置都是按照其地址值从小到大排序的。(__IO 表示 volatile)
+
+GPIOE_BASE就是GPIOE的基地址，其为：
+```c
+GPIOE_BASE=APB2PERIPH_BASE+0x1800 
+   = PERIPH_BASE + 0x10000 + 0x1800 
+   =0x40000000 + 0x10000 + 0x1800 
+   =0x40011800 
+```
+GPIOE_BASE的基地址为0x40011800，宏GPIOE指向这个地址并强行转化为(GPIO_TypeDef *)类型，因此GPIOE的寄存器CRL的地址就是0X40011800，寄存器CRH的地址就是0X40011800+4=0X40011804，其他寄存器地址以此类推。
+
+我们要操作GPIOE的ODR寄存器的话就可以通过“GPIOE->ODR”来实现，这个方法是借助了结构体成员地址连续递增的原理。
+
+了解了STM32的寄存器定义以后，我们就可以参考其原理来编写I.MX6U的外设寄存器定义了。NXP官方并没有为I.MX6UL编写类似stm32f10x.h这样的文件，NXP只为I.MX6ULL提供了类似stm32f10x.h这样的文件，名为MCIMX6Y2.h，但是I.MX6UL和I.MX6ULL几乎一模一样，所以文件MCIMX6Y2.h可以用在I.MX6UL上。
+
+关于文件MCIMX6Y2.h的移植我们在下一章讲解，本章我们参考stm32f10x.h来编写一个简单的MCIMX6Y2.h文件。
+
+#### 11.1.2 I.MX6U寄存器定义
+
+参考STM32的官方文件来编写I.MX6U的寄存器定义，比如IO复用寄存器组“IOMUX_SW_MUX_CTL_PAD_XX”，步骤如下：
+
+**1. 编写外设结构体**
+
+先将同属于一个外设的所有寄存器编写到一个结构体里面，如IO复用寄存器组的结构体如下：
+```C
+ /*  
+  * IOMUX寄存器组 
+  */ 
+1   typedef struct  
+2   { 
+3    volatile unsigned int BOOT_MODE0; 
+4    volatile unsigned int BOOT_MODE1; 
+5    volatile unsigned int SNVS_TAMPER0; 
+6    volatile unsigned int SNVS_TAMPER1; 
+ ……… 
+107  volatile unsigned int CSI_DATA00; 
+108  volatile unsigned int CSI_DATA01; 
+109  volatile unsigned int CSI_DATA02; 
+110  volatile unsigned int CSI_DATA03; 
+111  volatile unsigned int CSI_DATA04; 
+112  volatile unsigned int CSI_DATA05; 
+113  volatile unsigned int CSI_DATA06; 
+114  volatile unsigned int CSI_DATA07; 
+   /* 为了缩短代码，其余IO复用寄存器省略 */ 
+115}IOMUX_SW_MUX_Tpye; 
+```
+上述结构体IOMUX_SW_MUX_Type就是IO复用寄存器组，成员变量是每个IO对应的复用寄存器，每个寄存器的地址是32位，每个成员都使用“volatile”进行了修饰，目的是防止编译器优化。 
+
+**2. 定义IO复用寄存器组的基地址**
+
+根据结构体IOMUX_SW_MUX_Type的定义，其第一个成员变量为BOOT_MODE0，也就是BOOT_MODE0这个IO的IO复用寄存器，查找I.MX6U的参考手册可以得知其地址为0X020E0014，所以IO复用寄存器组的基地址就是0X020E0014，定义如下：
+`#define IOMUX_SW_MUX_BASE   (0X020E0014) `
+
+**3. 定义访问指针**
+
+`#define IOMUX_SW_MUX  ((IOMUX_SW_MUX_Type *)IOMUX_SW_MUX_BASE)`
+
+通过上面三步我们就可以通过“IOMUX_SW_MUX->GPIO1_IO03”来访问GPIO1_IO03的IO复用寄存器了。
+同样的，其他的外设寄存器都可以通过这三步来定义。 
+
+### 11.2 硬件分析原理
+
+LED0
+![alt](./images/Snipaste_2024-11-19_20-04-31.png)
+
+一端接3.3V电压，一端接LED0引脚，配以510Ω的限流电阻。
+
+LED0最终接到GPIO_3上，GPIO_3就是GPIO1_IO03，当 GPIO1_IO03输出低电平(0)的时候发光二极管LED0就会导通点亮，当GPIO1_IO03输出高电平(1)的时候发光二极管LED0不会导通，因此LED0也就不会点亮。所以LED0的亮灭取决于GPIO1_IO03的输出电平，输出0就亮，输出1就灭。
+
+### 11.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 3_ledc_stm32。 
+创建VSCode工程，工作区名字为“ledc_stm32”，新建三个文件：start.S、main.c和imx6ul.h。其中start.S是汇编文件，start.S文件的内容和第十章的start.S一样，直接复制过来就可以。main.c 和imx6ul.h是C文件。
+![alt](./images/Snipaste_2024-11-24_16-21-03.png)
+
+imx6ull.h代码如下：
+```C
+/*  
+ * 外设寄存器组的基地址  
+ */ 
+1   #define CCM_BASE              (0X020C4000) 
+2   #define CCM_ANALOG_BASE        (0X020C8000) 
+3   #define IOMUX_SW_MUX_BASE      (0X020E0014) 
+4   #define IOMUX_SW_PAD_BASE      (0X020E0204) 
+5   #define GPIO1_BASE               (0x0209C000) 
+6   #define GPIO2_BASE               (0x020A0000) 
+7   #define GPIO3_BASE               (0x020A4000) 
+8   #define GPIO4_BASE               (0x020A8000) 
+9   #define GPIO5_BASE               (0x020AC000) 
+10 
+11  /*  
+12   * CCM寄存器结构体定义，分为CCM和CCM_ANALOG  
+13   */ 
+14  typedef struct  
+15  { 
+16      volatile unsigned int CCR; 
+17      volatile unsigned int CCDR; 
+18      volatile unsigned int CSR; 
+  …… 
+46      volatile unsigned int CCGR6; 
+47      volatile unsigned int RESERVED_3[1]; 
+48      volatile unsigned int CMEOR;     
+49  } CCM_Type;  
+50   
+51  typedef struct  
+52  { 
+53      volatile unsigned int PLL_ARM; 
+54      volatile unsigned int PLL_ARM_SET; 
+55      volatile unsigned int PLL_ARM_CLR; 
+56      volatile unsigned int PLL_ARM_TOG; 
+  …… 
+110     volatile unsigned int MISC2; 
+111     volatile unsigned int MISC2_SET; 
+112     volatile unsigned int MISC2_CLR; 
+113     volatile unsigned int MISC2_TOG; 
+114 } CCM_ANALOG_Type;  
+115 
+116 /*  
+117  * IOMUX寄存器组 
+118  */ 
+119 typedef struct  
+120 { 
+121     volatile unsigned int BOOT_MODE0; 
+122     volatile unsigned int BOOT_MODE1; 
+123     volatile unsigned int SNVS_TAMPER0; 
+  …… 
+241     volatile unsigned int CSI_DATA04; 
+242     volatile unsigned int CSI_DATA05; 
+243     volatile unsigned int CSI_DATA06; 
+244     volatile unsigned int CSI_DATA07; 
+245 }IOMUX_SW_MUX_Type; 
+246 
+247 typedef struct  
+248 { 
+249     volatile unsigned int DRAM_ADDR00; 
+250     volatile unsigned int DRAM_ADDR01; 
+  …… 
+419     volatile unsigned int GRP_DDRPKE; 
+420     volatile unsigned int GRP_DDRMODE; 
+421     volatile unsigned int GRP_DDR_TYPE; 
+422 }IOMUX_SW_PAD_Type; 
+423  
+424 /*  
+425  * GPIO寄存器结构体 
+426  */ 
+427 typedef struct  
+428 { 
+429     volatile unsigned int DR;                            
+430     volatile unsigned int GDIR;                              
+431     volatile unsigned int PSR;                               
+432     volatile unsigned int ICR1;                              
+433     volatile unsigned int ICR2;                               
+434     volatile unsigned int IMR;                                
+435     volatile unsigned int ISR;           
+436     volatile unsigned int EDGE_SEL;   
+437 }GPIO_Type; 
+438 
+439  
+440 /*  
+441  * 外设指针  
+442  */ 
+443 #define CCM              ((CCM_Type *)CCM_BASE) 
+444 #define CCM_ANALOG       ((CCM_ANALOG_Type *)CCM_ANALOG_BASE) 
+445 #define IOMUX_SW_MUX    ((IOMUX_SW_MUX_Type *)IOMUX_SW_MUX_BASE) 
+446 #define IOMUX_SW_PAD  ((IOMUX_SW_PAD_Type *)IOMUX_SW_PAD_BASE) 
+447 #define GPIO1             ((GPIO_Type *)GPIO1_BASE) 
+448 #define GPIO2              ((GPIO_Type *)GPIO2_BASE) 
+449 #define GPIO3             ((GPIO_Type *)GPIO3_BASE) 
+450 #define GPIO4              ((GPIO_Type *)GPIO4_BASE) 
+451 #define GPIO5             ((GPIO_Type *)GPIO5_BASE) 
+```
+在编写寄存器组结构体的时候注意寄存器的地址是否连续，有些外设的寄存器地址可能不是连续的，会有一些保留地址，因此我们需要在结构体中留出这些保留的寄存器。
+比如：
+CCM的CCGR6寄存器地址为0X020C4080，而寄存器CMEOR的地址为0X020C4088。
+按照地址顺序递增的原理，寄存器CMEOR的地址应该是0X020C4084，但是实际上CMEOR的地址是0X020C4088，相当于中间跳过了0X020C4088-0X020C4080=8个字节。
+如果寄存器地址连续的话应该只差4个字节(32位)，但是现在差了8个字节，所以需要在寄存器CCGR6和CMEOR直接加入一个保留寄存器，这个就是“示例代码”中第47行RESERVED_3[1]的来源。
+如果不添加保留位来占位的话就会导致寄存器地址错位！
+
+main.c中编写下列文件：
+```C
+1   #include "imx6ul.h" 
+2    
+3   /* 
+4    * @description : 使能I.MX6U所有外设时钟 
+5    * @param       : 无 
+6    * @return      : 无 
+7    */ 
+8   void clk_enable(void) 
+9   { 
+10      CCM->CCGR0 = 0XFFFFFFFF; 
+11      CCM->CCGR1 = 0XFFFFFFFF; 
+12      CCM->CCGR2 = 0XFFFFFFFF; 
+13      CCM->CCGR3 = 0XFFFFFFFF; 
+14      CCM->CCGR4 = 0XFFFFFFFF; 
+15      CCM->CCGR5 = 0XFFFFFFFF; 
+16      CCM->CCGR6 = 0XFFFFFFFF; 
+17  } 
+18   
+19  /* 
+20   * @description : 初始化LED对应的GPIO 
+21   * @param       : 无 
+22   * @return      : 无 
+23   */ 
+24  void led_init(void) 
+25  { 
+26      /* 1、初始化IO复用 */ 
+27      IOMUX_SW_MUX->GPIO1_IO03 = 0X5;     /* 复用为GPIO1_IO03 */ 
+28   
+29   
+30      /* 2、配置GPIO1_IO03的IO属性   
+31       *bit 16:0 HYS关闭 
+32       *bit [15:14]: 00 默认下拉 
+33       *bit [13]: 0 kepper功能 
+34       *bit [12]: 1 pull/keeper使能 
+35       *bit [11]: 0 关闭开路输出 
+36       *bit [7:6]: 10 速度100Mhz 
+37       *bit [5:3]: 110 R0/6驱动能力 
+38       *bit [0]: 0 低转换率 
+39       */ 
+40      IOMUX_SW_PAD->GPIO1_IO03 = 0X10B0; 
+41
+42
+43      /* 3、初始化GPIO */ 
+44      GPIO1->GDIR = 0X0000008;    /* GPIO1_IO03设置为输出 */ 
+45   
+46      /* 4、设置GPIO1_IO03输出低电平，打开LED0 */   
+47      GPIO1->DR &= ~(1 << 3);  
+48       
+49  } 
+50  
+51  /* 
+52   * @description : 打开LED灯 
+53   * @param       : 无 
+54   * @return      : 无 
+55   */ 
+56  void led_on(void) 
+57  { 
+58      /* 将GPIO1_DR的bit3清零     */ 
+59      GPIO1->DR &= ~(1<<3);  
+60  } 
+61   
+62  /* 
+63   * @description : 关闭LED灯 
+64   * @param       : 无 
+65   * @return      : 无 
+66   */ 
+67  void led_off(void) 
+68  { 
+69      /* 将GPIO1_DR的bit3置1 */ 
+70      GPIO1->DR |= (1<<3);  
+71  } 
+72   
+73  /* 
+74   * @description : 短时间延时函数 
+75   * @param - n   : 要延时循环次数(空操作循环次数，模式延时) 
+76   * @return      : 无 
+77   */ 
+78  void delay_short(volatile unsigned int n) 
+79  { 
+80      while(n--){} 
+81  } 
+82   
+83  /* 
+84   * @description : 延时函数,在396Mhz的主频下 
+85   *                延时时间大约为1ms 
+86   * @param - n   : 要延时的ms数 
+87   * @return      : 无 
+88   */ 
+89  void delay(volatile unsigned int n) 
+90  { 
+91      while(n--) 
+92      { 
+93          delay_short(0x7ff); 
+94      } 
+95  } 
+96   
+97  /* 
+98   * @description : main函数 
+99   * @param       : 无 
+100  * @return      : 无 
+101  */ 
+102 int main(void) 
+103 { 
+104     clk_enable();        /* 使能所有的时钟       */ 
+105     led_init();          /* 初始化led           */ 
+106  
+107     while(1)             /* 死循环             */ 
+108     {    
+109         led_off();       /* 关闭LED             */ 
+110         delay(500);      /* 延时500ms           */ 
+111  
+112         led_on();        /* 打开LED             */ 
+113         delay(500);      /* 延时500ms           */ 
+114     } 
+115  
+116     return 0; 
+117 } 
+```
+main.c中7个函数，这7个函数的含义和第十章中的main.c文件一样，只是函数体写法变了，寄存器的访问采用imx6ul.h中定义的外设指针。
+比如第27行设置GPIO1_IO03的复用功能就可以通过“IOMUX_SW_MUX->GPIO1_IO03”来给寄存SW_MUX_CTL_PAD_GPIO1_IO03赋值。
+
+### 11.4 编译下载验证
+
+#### 11.4.1 编写Makefile与lds脚本
+
+```makefile
+1  objs := start.o main.o 
+2   
+3  ledc.bin:$(objs) 
+4    arm-linux-gnueabihf-ld -Timx6ul.lds -o ledc.elf $^ 
+5    arm-linux-gnueabihf-objcopy -O binary -S ledc.elf $@ 
+6    arm-linux-gnueabihf-objdump -D -m arm ledc.elf > ledc.dis 
+7   
+8  %.o:%.s 
+9    arm-linux-gnueabihf-gcc -Wall -nostdlib -c -O2 -o $@ $< 
+10   
+11 %.o:%.S 
+12   arm-linux-gnueabihf-gcc -Wall -nostdlib -c -O2 -o $@ $< 
+13   
+14 %.o:%.c 
+15   arm-linux-gnueabihf-gcc -Wall -nostdlib -c -O2 -o $@ $< 
+16   
+17 clean: 
+18   rm -rf *.o ledc.bin ledc.elf ledc.dis 
+```
+lds 与上节课代码完全一致
+
+#### 11.4.2 编译下载
+
+验证即可 成功
+
+## 第十二章 官方SDK移植
+
+在上一章中，我们参考ST官方给STM32编写的stm32f10x.h来自行编写I.MX6U的寄存器定义文件。
+自己编写这些寄存器定义不仅费时费力，没有任何意义，而且很容易写错，幸好NXP官方为I.MX6ULL编写了SDK包，在SDK包里面NXP已经编写好了寄存器定义文件，所以我们可以直接移植SDK包里面的文件来用。
+虽然NXP是为I.MX6ULL编写的SDK包，但是I.MX6UL也是可以使用的！
+本章我们就来讲解如何移植SDK包里面重要的文件，方便我们的开发。
+
+### 12.1 I.MX6ULL 官方SDK包简介
+
+NXP 针对I.MX6ULL 编写了一个SDK包，这个SDK包就类似于STM32的STD库或者HAL 库，这个SDK包提供了Windows 和Linux 两种版本，分别针对主机系统是Windows和Linux。
+因为我们是在Windows下使用Source Insight来编写代码的，因此我们使用的是Windows版本的。
+Windows版本SDK里面的例程提供了IAR版本，肯定有人会问既然NXP提供了IAR
+版本的SDK，那我们为什么不用IAR来完成裸机试验，偏偏要用复杂的GCC？
+因为我们要从简单的裸机开始掌握Linux下的GCC开发方法，包括Ubuntu操作系统的使用、Makefile的编写、shell 等等。
+如果为了偷懒而使用IAR开发裸机的话，那么后续学习Uboot移植、Linux移植和Linux 驱动开发就会很难上手，因为开发环境都不熟悉！
+再者，不是所有的半导体厂商都会为Cortex-A 架构的芯片编写裸机SDK包，我使用过那么多的Cotex-A系列芯片，也就发现了NXP给I.MX6ULL 编写了裸机SDK包。
+而且去NXP官网看一下，会发现只有I.MX6ULL这一款Cotex-A内核的芯片有裸机SDK包，NXP的其它Cotex-A芯片都没有。
+说明在NXP的定位里面，I.MX6ULL就是一个Cotex-A内核的高端单片机，定位类似ST的STM32H7。
+说这么多的目的就是想告诉大家，使用Cortex-A内核芯片的时候不要想着有类似STM32库一样的东西，I.MX6ULL 是一个特例，基本所有的Cortex-A 内核的芯片都不会提供裸机SDK包。因此在使用STM32 的时候那些用起来很顺手的库文件，在Cotex-A 芯片下基本都需要我们自行编写，比如.s启动文件、寄存器定义等等。
+
+SDK包我们可以去NXP官网下载
+开发板光盘-> 7、I.MX6U 参考资料->3、I.MX6ULL SDK 包-> SDK_2.2_MCIM6ULL_RFP_Win.exe。也有我们需要的包
+
+双击下载即可。我们并不会讲解SDK包，只是需要SDK包的几个定义寄存器的头文件。
+
+如下
+fsl_common.h：
+位置为 SDK_2.2_MCIM6ULL\devices\MCIMX6Y2\drivers\fsl_common.h。 
+fsl_iomuxc.h:  
+位置为 SDK_2.2_MCIM6ULL\devices\MCIMX6Y2\drivers\fsl_iomuxc.h。 
+MCIMX6Y2.h: 
+位置为SDK_2.2_MCIM6ULL\devices\MCIMX6Y2\MCIMX6YH2.h。
+
+补充：
+IAR介绍：
+
+    IAR Systems是一家全球领先的嵌入式系统开发工具和服务的供应商，成立于1983年。
+    该公司提供的产品和服务涵盖嵌入式系统的设计、开发和测试的每一个阶段，包括带有C/C++编译器和调试器的集成开发环境（IDE）、实时操作系统和中间件、开发套件、硬件仿真器以及状态机建模工具等‌。
+    类比于keil5 MDK
+
+SDK包：
+
+    SDK包（Software Development Kit）是一组开发工具的集合，
+    主要用于辅助软件工程师为特定的软件包、软件框架、硬件平台或操作系统创建应用软件。‌
+
+    SDK通常包括编译器、调试器、软件框架等工具，这些工具能够促进应用程序的创建。
+    SDK不仅提供应用程序接口（API）的相关文件，还可能包含与嵌入式系统通讯的复杂硬件组件
+
+![alt](./images/Snipaste_2024-11-24_17-00-27.png)
+
+### 12.2 硬件原理图
+
+LED1 同上诉完全一致
+
+### 12.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 4_ledc_sdk
+
+#### 12.3.1 SDK文件移植
+
+使用VSCode新建工程，将fsl_common.h、fsl_iomuxc.h 和 MCIMX6Y2.h 这三个文件拷贝到工程中，这三个文件直接编译的话肯定会出错的！
+需要对其做删减，因为这三个文件里面的代码都比较大，所以就不详细列出这三个文件删减以后的内容了。
+大家可以参考我们提供的裸机例程来修改这三个文件，很简单的。
+
+#### 12.3.2 创建cc.h文件
+
+新建一个名为cc.h 的头文件，cc.h 里面存放一些 SDK 库文件需要使用到的数据类型，在cc.h 里面输入如下代码：
+```C
+#ifndef __CC_H 
+#define __CC_H 
+/* 
+ * 自定义一些数据类型供库文件使用 
+ */ 
+#define     __I     volatile  
+#define     __O     volatile  
+#define     __IO    volatile 
+ 
+#define      ON      1 
+#define      OFF     0 
+ 
+typedef    signed  char       int8_t; 
+typedef    signed  short int  int16_t; 
+typedef    signed        int  int32_t; 
+typedef unsigned         char uint8_t; 
+typedef unsigned  short  int  uint16_t; 
+typedef unsigned         int  uint32_t; 
+typedef unsigned  long   long uint64_t; 
+typedef   signed  char           s8;       
+typedef   signed  short  int     s16; 
+typedef   signed  int            s32; 
+typedef   signed  long  long  int  s64; 
+typedef unsigned  char           u8; 
+typedef unsigned  short  int     u16; 
+typedef unsigned  int            u32; 
+typedef unsigned  long  long  int  u64; 
+ 
+#endif
+```
+#### 12.3.3 编写实验代码
+
+新建start.S和main.c这两个文件，start.S文件的内容和上一章一样，直接复制过来就可以
+main.c代码如下：
+```C
+1   #include "fsl_common.h" 
+2   #include "fsl_iomuxc.h" 
+3   #include "MCIMX6Y2.h" 
+4    
+5   /* 
+6    * @description : 使能I.MX6U所有外设时钟 
+7    * @param       : 无 
+8    * @return      : 无 
+9    */ 
+10  void clk_enable(void) 
+11  { 
+12      CCM->CCGR0 = 0XFFFFFFFF; 
+13      CCM->CCGR1 = 0XFFFFFFFF; 
+14   
+15      CCM->CCGR2 = 0XFFFFFFFF; 
+16      CCM->CCGR3 = 0XFFFFFFFF; 
+17      CCM->CCGR4 = 0XFFFFFFFF; 
+18      CCM->CCGR5 = 0XFFFFFFFF; 
+19      CCM->CCGR6 = 0XFFFFFFFF; 
+20
+21  } 
+22   
+23  /* 
+24   * @description : 初始化LED对应的GPIO 
+25   * @param       : 无 
+26   * @return      : 无 
+27   */ 
+28  void led_init(void) 
+29  { 
+30      /* 1、初始化IO复用 */ 
+31      IOMUXC_SetPinMux(IOMUXC_GPIO1_IO03_GPIO1_IO03,0); 
+32   
+33      /* 2、、配置GPIO1_IO03的IO属性    
+34       *bit 16:0 HYS关闭 
+35       *bit [15:14]: 00 默认下拉 
+36       *bit [13]: 0 kepper功能 
+37       *bit [12]: 1 pull/keeper使能 
+38       *bit [11]: 0 关闭开路输出 
+39       *bit [7:6]: 10 速度100Mhz 
+40       *bit [5:3]: 110 R0/6驱动能力 
+41       *bit [0]: 0 低转换率 
+42       */ 
+43      IOMUXC_SetPinConfig(IOMUXC_GPIO1_IO03_GPIO1_IO03,0X10B0); 
+44   
+45      /* 3、初始化GPIO,设置GPIO1_IO03设置为输出  */ 
+46      GPIO1->GDIR |= (1 << 3);     
+47       
+48      /* 4、设置GPIO1_IO03输出低电平，打开LED0 */ 
+49      GPIO1->DR &= ~(1 << 3);          
+50  } 
+51   
+52  /* 
+53   * @description : 打开LED灯 
+54   * @param       : 无 
+55   * @return      : 无 
+56   */ 
+57  void led_on(void) 
+58  { 
+59      /* 将GPIO1_DR的bit3清零     */ 
+60      GPIO1->DR &= ~(1<<3);  
+61  } 
+62   
+63  /*
+64   * @description : 关闭LED灯 
+65   * @param       : 无 
+66   * @return      : 无 
+67   */ 
+68  void led_off(void) 
+69  { 
+70      /* 将GPIO1_DR的bit3置1 */ 
+71      GPIO1->DR |= (1<<3);  
+72  } 
+73   
+74  /* 
+75   * @description : 短时间延时函数 
+76   * @param - n   : 要延时循环次数(空操作循环次数，模式延时) 
+77   * @return      : 无 
+78   */ 
+79  void delay_short(volatile unsigned int n) 
+80  { 
+81      while(n--){} 
+82  } 
+83   
+84  /* 
+85   * @description : 延时函数,在396Mhz的主频下 
+86   *                  延时时间大约为1ms 
+87   * @param - n   : 要延时的ms数 
+88   * @return       : 无 
+89   */ 
+90  void delay(volatile unsigned int n) 
+91  { 
+92      while(n--) 
+93      { 
+94          delay_short(0x7ff); 
+95      } 
+96  } 
+97   
+98  /* 
+99   * @description : main函数 
+100  * @param       : 无 
+101  * @return      : 无 
+102  */ 
+103 int main(void) 
+104 { 
+105     clk_enable();     /* 使能所有的时钟    */ 
+106     led_init();       /* 初始化led        */ 
+107  
+108     while(1)         /* 死循环          */ 
+109     {    
+110         led_off();    /* 关闭LED         */ 
+111         delay(500);   /* 延时500ms       */ 
+112  
+113         led_on();     /* 打开LED        */ 
+114         delay(500);   /* 延时500ms       */ 
+115     } 
+116  
+117     return 0; 
+118 } 
+```
+我们重点来看一下led_init函数中的第31行和第43行，这两行的内容如下：
+```C
+IOMUXC_SetPinMux(IOMUXC_GPIO1_IO03_GPIO1_IO03,  0);  
+IOMUXC_SetPinConfig(IOMUXC_GPIO1_IO03_GPIO1_IO03, 0X10B0);
+```
+这里使用了两个函数IOMUXC_SetPinMux和IOMUXC_SetPinConfig，其中函数IOMUXC_SetPinMux是用来设置IO复用功能的，最终肯定设置的是寄存器“IOMUXC_SW_<span style="color:red;">MUX</span>\_CTL_PAD_<span style="color:blue;">XX</span>”。
+函数IOMUXC_SetPinConfig设置的是IO的上下拉、速度等的，也就是寄存器“IOMUXC_SW_<span style="color:red;">PAD</span>\_CTL_PAD_<span style="color:blue;">XX</span>”
+故而：
+上诉两个函数其实就是：
+`IOMUX_SW_MUX->GPIO1_IO03 = 0X5;`
+`IOMUX_SW_PAD->GPIO1_IO03 = 0X10B0;`
+
+这两个函数均在在文件fsl_iomuxc.h中定义，源码如下：
+```C
+static inline void IOMUXC_SetPinMux(uint32_t muxRegister, 
+                                    uint32_t muxMode, 
+                                    uint32_t inputRegister, 
+                                    uint32_t inputDaisy, 
+                                    uint32_t configRegister, 
+                                    uint32_t inputOnfield) 
+{ 
+    *((volatile uint32_t *)muxRegister) = 
+        IOMUXC_SW_MUX_CTL_PAD_MUX_MODE(muxMode) |  
+IOMUXC_SW_MUX_CTL_PAD_SION(inputOnfield); 
+ 
+    if (inputRegister) 
+    { 
+        *((volatile uint32_t *)inputRegister) =  
+IOMUXC_SELECT_INPUT_DAISY(inputDaisy); 
+    } 
+}
+```
+函数IOMUXC_SetPinMux有6个参数，这6个参数的函数如下：
+
+muxRegister ： IO 的复用寄存器地址，比如 GPIO1_IO03 的 IO 复用寄存器SW_MUX_CTL_PAD_GPIO1_IO03 的地址为0X020E0068。
+
+muxMode： IO复用值，也就是ALT0~ALT8，对应数字0~8，比如要将GPIO1_IO03设置为GPIO功能的话此参数就要设置为5。 
+
+inputRegister：外设输入 IO 选择寄存器地址，有些IO在设置为其他的复用功能以后还需要设置 IO 输入寄存器，比如 GPIO1_IO03 要复用为 UART1_RX 的话还需要设置寄存器UART1_RX_DATA_SELECT_INPUT，此寄存器地址为0X020E0624。 
+
+inputDaisy：寄存器 inputRegister 的值，比如 GPIO1_IO03 要作为UART1_RX引脚的话此参数就是1。 
+
+configRegister：未使用，函数 IOMUXC_SetPinConfig 会使用这个寄存器。 
+
+inputOnfield ： IO 软 件 输 入 使 能 ， 以 GPIO1_IO03 为 例 就 是 寄 存 器SW_MUX_CTL_PAD_GPIO1_IO03 的SION位(bit4)。如果需要使能GPIO1_IO03的软件输入功能的话此参数应该为1，否则的话就为0。 
+
+IOMUXC_SetPinMux 的函数体很简单，就是根据参数对**寄存器muxRegister和inputRegister进行赋值**。
+
+示例代码中的 31 行使用此函数将 GPIO1_IO03 的复用功能设置为
+GPIO，如下：
+`IOMUXC_SetPinMux(IOMUXC_GPIO1_IO03_GPIO1_IO03, 0); `
+
+其中，IOMUXC_GPIO1_IO03_GPIO1_IO03 是个宏，在文件fsl_iomuxc.h 中有定义，NXP 的 SDK 库将一个 IO 的所有复用功能都定义了一个宏，如下：
+```C
+IOMUXC_GPIO1_IO03_I2C1_SDA 
+IOMUXC_GPIO1_IO03_GPT1_COMPARE3                    
+IOMUXC_GPIO1_IO03_USB_OTG2_OC                         
+IOMUXC_GPIO1_IO03_USDHC1_CD_B                      
+IOMUXC_GPIO1_IO03_GPIO1_IO03                        
+IOMUXC_GPIO1_IO03_CCM_DI0_EXT_CLK                
+IOMUXC_GPIO1_IO03_SRC_TESTER_ACK                     
+IOMUXC_GPIO1_IO03_UART1_RX                       
+IOMUXC_GPIO1_IO03_UART1_TX
+```
+上面9个宏定义分别对应着GPIO1_IO03的九种复用功能，比如复用为GPIO的宏定义就是：
+
+```C
+#define IOMUXC_GPIO1_IO03_GPIO1_IO03  0x020E0068U,  0x5U,  0x00000000U,  0x0U,    0x020E02F4U
+```
+将这个宏带入到“示例代码”的31行以后就是:
+`IOMUXC_SetPinMux (0x020E0068U, 0x5U, 0x00000000U, 0x0U, 0x020E02F4U, 0); `
+
+补充： SION位：
+
+    SION位（Software Input On）在IOMUXC寄存器中用于强制激活输入路径。
+    具体来说，当SION位被设置为1时，无论引脚的多路复用模式（MUX_MODE）如何配置，输入信号都会被传递到输入模块。
+    
+    应用场景：
+    在SD卡接口中，SD_CMD引脚用于发送命令和接收响应。
+    通常情况下，这个引脚需要在发送命令和接收响应之间快速切换其功能。
+    通过设置SION位，可以简化这个过程：
+    
+    发送命令：SD控制器通过SD_CMD引脚发送命令到SD卡。
+    接收响应：SD卡通过同一个SD_CMD引脚发送响应回SD控制器。
+    
+    如果不设置SION位，软件需要在每次发送命令和接收响应之间切换引脚的多路复用模式（MUX_MODE）。
+    这不仅增加了代码复杂性，还可能导致时间延迟。通过设置SION位，SD_CMD引脚的输入路径始终激活，无需在发送命令和接收响应之间切换模式，从而简化了操作并提高了效率。(常说的软件输入功能)
+
+总之，这样我们的代码就与IOMUXC_SetPinMux的参数对应起来了。
+
+下面我们来看第二个函数，IOMUXC_SetPinConfig。在文件fsl_iomuxc.h中有定义，函数源码如下：
+```C
+static inline void IOMUXC_SetPinConfig(uint32_t muxRegister, 
+                                       uint32_t muxMode,
+                                       uint32_t inputRegister, 
+                                       uint32_t inputDaisy, 
+                                       uint32_t configRegister, 
+                                       uint32_t configValue) 
+{ 
+    if (configRegister) 
+    { 
+        *((volatile uint32_t *)configRegister) = configValue; 
+    } 
+} 
+```
+函数IOMUXC_SetPinConfig有6个参数，其中前五个参数和函数IOMUXC_SetPinMux一
+样，但是此函数只使用了参数configRegister和configValue，cofigRegister参数是IO配置寄存器地址.
+比如GPIO1_IO03的IO配置寄存器为IOMUXC_SW_PAD_CTL_PAD_GPIO1_IO03，其地址为0X020E02F4，参数configValue就是要写入到寄存器configRegister的值。
+
+同理：
+`IOMUXC_SetPinConfig(IOMUXC_GPIO1_IO03_GPIO1_IO03, 0X10B0);`
+展开后为
+`IOMUXC_SetPinConfig(0x020E0068U, 0x5U, 0x00000000U, 0x0U, 0x020E02F4U, 0X10B0); `
+
+根据函数IOMUXC_SetPinConfig的源码可以知道，上面函数就是将寄存器0x020E02F4的值设置为0X10B0。
+
+函数IOMUXC_SetPinMux和IOMUXC_SetPinConfig就讲解到这里，我们以后就可以使用这两个函数来方便的配置IO的复用功能和IO配置。
+
+### 12.4 编译验证
+
+#### 12.4.1 编写Makefile与lds
+
+Makefile文件是在第十一章中的Makefile上修改的，只是使用到了变量。链接脚本imx6ul.lds 的内容和上一章一样，可以直接使用上一章的链接脚本文件
+
+```makefile
+1  CROSS_COMPILE  ?= arm-linux-gnueabihf- 
+2  NAME         ?= ledc 
+3   
+4  CC         := $(CROSS_COMPILE)gcc 
+5  LD         := $(CROSS_COMPILE)ld 
+6  OBJCOPY   := $(CROSS_COMPILE)objcopy 
+7  OBJDUMP   := $(CROSS_COMPILE)objdump 
+8   
+9  OBJS     := start.o main.o 
+10  
+11 $(NAME).bin:$(OBJS) 
+12   $(LD) -Timx6ul.lds -o $(NAME).elf $^ 
+13   $(OBJCOPY) -O binary -S $(NAME).elf $@ 
+14   $(OBJDUMP) -D -m arm $(NAME).elf > $(NAME).dis 
+15  
+16 %.o:%.s 
+17   $(CC) -Wall -nostdlib -c -O2 -o $@ $< 
+18   
+19 %.o:%.S 
+20   $(CC) -Wall -nostdlib -c -O2 -o $@ $< 
+21   
+22 %.o:%.c 
+23   $(CC) -Wall -nostdlib -c -O2 -o $@ $< 
+24   
+25 clean: 
+26   rm -rf *.o $(NAME).bin $(NAME).elf $(NAME).dis 
+```
+?= 表示条件赋值运算符。它的作用是 仅在变量未被定义时 赋值。定义后则不再赋值
+:= 是一种简单赋值运算符。它的作用是立即对右侧的表达式求值，并将结果赋值给左侧的变量。
+VAR = value：延迟求值，只有在变量被使用时才求值。
+
+#### 12.4.2
+
+下载验证即可，成功
+
+## 第十三章 BSP工程管理实验
+
+
 

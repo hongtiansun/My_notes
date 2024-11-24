@@ -117,7 +117,7 @@ projectfile : src out makefile
 
 每次make会将src中文件生成文件放于out中
 
-```
+```makefile
   1 src=$(wildcard ./src/*.c) #取出所有的.c文件
   2 obj=$(patsubst ./src/%.c,./out/%.out,$(src)) #src中匹配目标文件
   3 
