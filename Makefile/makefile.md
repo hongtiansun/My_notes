@@ -37,7 +37,7 @@ ALL:output.out
 - 提取源文件：
     src=$(wildcard ./src/*.c) #src中会返回./src中 所有的以.c结尾的文件名
 - 文件名替换：
-    obj=\$(patsubstv ./src/\%.c, \./obj/\%.o,\$(src))
+    obj=\$(patsubst ./src/\%.c, \./obj/\%.o,\$(src))
     \%代表不变量，匹配任意字符不改变
     此函数操作会将$(src)中取得的所有的./src/\%.c 文件替换为./obj/\%.o并将替换后的结果存入obj
 

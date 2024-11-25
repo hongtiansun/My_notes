@@ -3896,5 +3896,1483 @@ VAR = value：延迟求值，只有在变量被使用时才求值。
 
 ## 第十三章 BSP工程管理实验
 
+在前面的章节中，我们都是将所有的源码文件放到工程的根目录下，如果工程文件比较少的话这样做无可厚非，但是如果工程源文件达到几十、甚至数百个的时候，这样一股脑全部放到根目录下就会使工程显得混乱不堪。
 
+所以我们必须对工程文件做管理，将不同功能的源码文件放到不同的目录中。
+另外我们也需要将源码文件中，所有完成同一个功能的代码提取出来放到一个单独的文件中，也就是对程序分功能管理。
+本章我们就来学习一下如何对一个工程进行整理，使其美观、功能模块清晰、易于阅读。 
+
+### 13.1 工程管理简介
+
+将所有的源码文件都放到工程根目录下，即使这个工程只是完成了一个简单的流水灯的功能，但是其工程根目录下的源码文件就已经不少了。
+如果在添加一些其他的功能文件，那么文档就会更大，显得很混乱，所以我们需要对这个工程进行整理，将源码文件分模块、分功能整理。
+
+![alt](./images/Snipaste_2024-11-24_19-34-07.png)
+
+图13.1.2 中的工程目录就很美观、不同的功能模块文件放到不同的文件夹中，比如驱动文件就放到HARDWARE 文件夹中，ST的官方库就放到STM32F10x_FWLib 文件夹中，编译产生的过程文件放到 OBJ 文件夹中。
+
+我们可以参考这个工程目录结构来整理第十二章的例程工程，新建名为“5_ledc_bsp”的文件夹，在里面新建bsp、imx6ul、obj和project这4个文件夹
+
+![alt](./images/Snipaste_2024-11-24_19-35-51.png)
+
+其中bsp用来存放驱动文件；
+imx6ul用来存放跟芯片有关的文件，比如NXP官方的SDK库文件；
+obj用来存放编译生成的.o文件；
+project存放start.S和main.c文件，也就是应用文件；
+
+将十二章实验中的cc.h、fsl_common.h、fsl_iomuxc.h 和 MCIMX6Y2.h 这四个文件拷贝到文件夹imx6ul 中
+将start.S 和 main.c 这两个文件拷贝到文件夹project中
+我们前面的实验中所有
+的驱动相关的函数都写到了main.c文件中，比如函数clk_enable、led_init和delay，这三个函数可以分为三类：时钟驱动、LED驱动和延时驱动。
+因此我们可以在bsp文件夹下创建三个子文件夹：clk、delay 和 led，分别用来存放时钟驱动文件、延时驱动文件和 LED 驱动文件，这样main.c 函数就会清爽很多，程序功能模块清晰。
+
+至此，工程文件夹都创建好了，接下来就是编写代码了，其实就是将时钟驱动、LED驱动和延时驱动相关的函数从main.c中提取出来做成一个独立的驱动文件 。
+
+### 13.2 硬件原理分析
+
+没错还是一个LED
+
+### 13.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 5_ledc_bsp
+
+#### 13.3.1 创建imx6ull.h
+
+新建文件imx6ul.h，然后保存到文件夹imx6ul中，在imx6ul.h中输入如下内容：
+```C
+1  #ifndef __IMX6UL_H 
+2  #define __IMX6UL_H 
+3  /*************************************************************** 
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+5  文件名    : imx6ul.h 
+6  作者      : 左忠凯 
+7  版本      : V1.0 
+8  描述      : 包含一些常用的头文件。 
+9  其他      : 无 
+10 论坛      : www.openedv.com 
+11 日志      : 初版V1.0 2019/1/3 左忠凯创建 
+12 ***************************************************************/ 
+13 #include "cc.h" 
+14 #include "MCIMX6Y2.h" 
+15 #include "fsl_common.h" 
+16 #include "fsl_iomuxc.h" 
+17  
+18 #endif 
+```
+文件imx6ul.h很简单，就是引用了一些头文件，以后我们就可以在其他文件中需要引用imx6ul.h就可以了。 
+
+#### 13.3.2 编写led驱动
+
+新建bsp_led.h和bsp_led.c两个文件，将这两个文件存放到bsp/led中，在bsp_led.h中输入输入如下内容： 
+
+```C
+1  #ifndef __BSP_LED_H 
+2  #define __BSP_LED_H 
+3  #include "imx6ul.h" 
+4  /*************************************************************** 
+5  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+6  文件名    : bsp_led.h 
+7  作者      : 左忠凯 
+8  版本      : V1.0 
+9  描述      : LED驱动头文件。 
+10 其他      : 无
+11 论坛      : www.openedv.com 
+12 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+13 ***************************************************************/ 
+14  
+15 #define LED0 0 
+16  
+17 /* 函数声明 */ 
+18 void led_init(void); 
+19 void led_switch(int led, int status); 
+20 #endif 
+```
+
+```C
+1  #include "bsp_led.h" 
+2  /*************************************************************** 
+3  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+4  文件名    : bsp_led.c 
+5  作者      : 左忠凯 
+6  版本      : V1.0 
+7  描述      : LED驱动文件。 
+8  其他      : 无 
+9  论坛      : www.openedv.com 
+10 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+11 ***************************************************************/ 
+12  
+13 /* 
+14  * @description  : 初始化LED对应的GPIO 
+15  * @param         : 无 
+16  * @return        : 无 
+17  */ 
+18 void led_init(void) 
+19 { 
+20   /* 1、初始化IO复用 */ 
+21   IOMUXC_SetPinMux(IOMUXC_GPIO1_IO03_GPIO1_IO03,0);        
+22   
+23   /* 2、、配置GPIO1_IO03的IO属性 */ 
+24   IOMUXC_SetPinConfig(IOMUXC_GPIO1_IO03_GPIO1_IO03,0X10B0); 
+25   
+26   /* 3、初始化GPIO,GPIO1_IO03设置为输出*/ 
+27   GPIO1->GDIR |= (1 << 3);      
+28  
+29   /* 4、设置GPIO1_IO03输出低电平，打开LED0*/ 
+30   GPIO1->DR &= ~(1 << 3);      
+31 }
+32  
+33 /* 
+34  * @description     : LED控制函数，控制LED打开还是关闭 
+35  * @param - led       : 要控制的LED灯编号 
+36  * @param - status    : 0，关闭LED0，1 打开LED0 
+37  * @return             : 无 
+38  */ 
+39 void led_switch(int led, int status) 
+40 {     
+41   switch(led) 
+42   { 
+43       case LED0: 
+44            if(status == ON) 
+45                GPIO1->DR &= ~(1<<3);   /* 打开LED0 */ 
+46            else if(status == OFF) 
+47                GPIO1->DR |= (1<<3);    /* 关闭LED0 */ 
+48            break; 
+49   } 
+50 } 
+```
+bsp_led.c里面就两个函数led_init和led_switch.
+led_init函数用来初始化LED所使用的IO，led_switch函数是控制LED灯的打开和关闭
+
+#### 13.3.3 编写时钟驱动代码
+
+新建bsp_clk.h和bsp_clk.c两个文件，将这两个文件存放到bsp/clk中，在bsp_clk.h中输入输入如下内容：
+
+```C
+1  #ifndef __BSP_CLK_H 
+2  #define __BSP_CLK_H 
+3  /*************************************************************** 
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+5  文件名    : bsp_clk.h 
+6  作者      : 左忠凯 
+7  版本      : V1.0 
+8  描述      : 系统时钟驱动头文件。 
+9  其他      : 无 
+10 论坛      : www.openedv.com 
+11 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+12 ***************************************************************/ 
+13  
+14 #include "imx6ul.h" 
+15  
+16 /* 函数声明 */ 
+17 void clk_enable(void); 
+18  
+19 #endif 
+```
+
+```C
+1  #include "bsp_clk.h" 
+2   
+3  /*************************************************************** 
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+5  文件名    : bsp_clk.c 
+6  作者      : 左忠凯 
+7  版本      : V1.0 
+8  描述      : 系统时钟驱动。 
+9  其他      : 无 
+10 论坛      : www.openedv.com 
+11 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+12 ***************************************************************/ 
+13  
+14 /* 
+15  * @description   : 使能I.MX6U所有外设时钟 
+16  * @param         : 无 
+17  * @return        : 无 
+18  */ 
+19 void clk_enable(void) 
+20 { 
+21   CCM->CCGR0 = 0XFFFFFFFF; 
+22   CCM->CCGR1 = 0XFFFFFFFF; 
+23   CCM->CCGR2 = 0XFFFFFFFF; 
+24   CCM->CCGR3 = 0XFFFFFFFF; 
+25   CCM->CCGR4 = 0XFFFFFFFF; 
+26   CCM->CCGR5 = 0XFFFFFFFF; 
+27   CCM->CCGR6 = 0XFFFFFFFF; 
+28 } 
+```
+bsp_clk.c只有一个clk_enable函数，用来使能所有的外设时钟。
+
+#### 13.3.4 编写延时驱动代码
+
+新建bsp_delay.h和bsp_delay.c两个文件，将这两个文件存放到bsp/delay中
+
+```C
+1  #ifndef __BSP_DELAY_H 
+2  #define __BSP_DELAY_H 
+3  /*************************************************************** 
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+5  文件名    : bsp_delay.h
+6  作者      : 左忠凯 
+7  版本      : V1.0 
+8  描述      : 延时头文件。 
+9  其他      : 无 
+10 论坛      : www.openedv.com 
+11 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+12 ***************************************************************/ 
+13 #include "imx6ul.h" 
+14  
+15 /* 函数声明 */ 
+16 void delay(volatile unsigned int n); 
+17  
+18 #endif
+```
+
+```C
+/*************************************************************** 
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+文件名   : bsp_delay.c 
+作者     : 左忠凯 
+版本     : V1.0 
+描述     : 延时文件。 
+其他     : 无 
+论坛     : www.openedv.com 
+日志     : 初版V1.0 2019/1/4 左忠凯创建 
+***************************************************************/ 
+1  #include "bsp_delay.h" 
+2   
+3  /* 
+4   * @description   : 短时间延时函数 
+5   * @param - n     : 要延时循环次数(空操作循环次数，模式延时) 
+6   * @return        : 无 
+7   */ 
+8  void delay_short(volatile unsigned int n) 
+9  { 
+10   while(n--){} 
+11 } 
+12  
+13 /* 
+14  * @description  : 延时函数,在396Mhz的主频下 
+15  *                      延时时间大约为1ms 
+16  * @param - n     : 要延时的ms数 
+17  * @return         : 无 
+18  */
+19 void delay(volatile unsigned int n) 
+20 { 
+21   while(n--) 
+22   { 
+23       delay_short(0x7ff); 
+24   } 
+25 } 
+```
+bsp_delay.c里面就两个函数，delay_short和delay，这两个其实就是第十二章中main.c里面的函数。
+
+#### 13.3.5 修改main文件
+
+改为从模块调用：
+```C
+1  #include "bsp_clk.h" 
+2  #include "bsp_delay.h" 
+3  #include "bsp_led.h" 
+4   
+5  /* 
+6   * @description  : main函数 
+7   * @param         : 无 
+8   * @return        : 无 
+9   */ 
+10 int main(void) 
+11 { 
+12   clk_enable();       /* 使能所有的时钟 */ 
+13    led_init();         /* 初始化led     */ 
+14  
+15   while(1) 
+16   {    
+17       /* 打开LED0 */ 
+18        led_switch(LED0,ON);         
+19       delay(500); 
+20  
+21       /* 关闭LED0 */ 
+22       led_switch(LED0,OFF);        
+23       delay(500); 
+24   } 
+25  
+26    return 0; 
+27 } 
+```
+
+### 13.4 编译下载
+
+#### 13.4.1 编写Makefile与lds
+
+Makefile文件如下代码：
+```makefile
+1  CROSS_COMPILE ?= arm-linux-gnueabihf- 
+2  TARGET           ?= bsp 
+3   
+4  CC                := $(CROSS_COMPILE)gcc 
+5  LD                := $(CROSS_COMPILE)ld 
+6  OBJCOPY       := $(CROSS_COMPILE)objcopy 
+7  OBJDUMP       := $(CROSS_COMPILE)objdump 
+8   
+9  INCDIRS       := imx6ul \ 
+10                   bsp/clk \ 
+11                  bsp/led \ 
+12                   bsp/delay  
+13                              
+14 SRCDIRS         := project \ 
+15                   bsp/clk \ 
+16                   bsp/led \ 
+17                   bsp/delay  
+18                          
+19 INCLUDE         := $(patsubst %, -I %, $(INCDIRS))
+20  
+21 SFILES          := $(foreach dir, $(SRCDIRS), $(wildcard $(dir)/*.S)) 
+22 CFILES          := $(foreach dir, $(SRCDIRS), $(wildcard $(dir)/*.c)) 
+23  
+24 SFILENDIR       := $(notdir  $(SFILES)) 
+25 CFILENDIR       := $(notdir  $(CFILES)) 
+26  
+27 SOBJS           := $(patsubst %, obj/%, $(SFILENDIR:.S=.o)) 
+28 COBJS           := $(patsubst %, obj/%, $(CFILENDIR:.c=.o)) 
+29 OBJS          := $(SOBJS) $(COBJS) 
+30  
+31 VPATH          := $(SRCDIRS) 
+32  
+33 .PHONY: clean 
+34   
+35 $(TARGET).bin : $(OBJS) 
+36   $(LD) -Timx6ul.lds -o $(TARGET).elf $^ 
+37   $(OBJCOPY) -O binary -S $(TARGET).elf $@ 
+38   $(OBJDUMP) -D -m arm $(TARGET).elf > $(TARGET).dis 
+39  
+40 $(SOBJS) : obj/%.o : %.S 
+41   $(CC) -Wall -nostdlib -c -O2  $(INCLUDE) -o $@ $< 
+42  
+43 $(COBJS) : obj/%.o : %.c 
+44   $(CC) -Wall -nostdlib -c -O2  $(INCLUDE) -o $@ $< 
+45   
+46 clean: 
+47  rm -rf $(TARGET).elf $(TARGET).dis $(TARGET).bin $(COBJS) $(SOBJS) 
+```
+本章实验的Makefile文件要比前面的实验复杂很多，因为示例代码中的Makefile代码是一个通用Makefile，我们以后所有的裸机例程都使用这个Makefile。
+使用时候只要将所需要编译的源文件所在的目录添加到Makefile中即可.
+
+Makefile分析：
+
+第1~7行定义了一些变量，除了第2行以外其它的都是跟编译器有关的，如果使用其它编
+译器的话只需要修改第1行即可。
+第2行的变量TARGET目标名字，不同的例程肯定名字不一样。
+第9行的变量INCDIRS包含整个工程的.h头文件目录，文件中的所有头文件目录都要添加到变量INCDIRS中。
+比如本例程中包含.h头文件的目录有imx6ul、bsp/clk、bsp/delay和bsp/led，所以就需要在变量INCDIRS中添加这些目录，即: 
+`INCDIRS := imx6ul bsp/clk bsp/led bsp/delay`
+第9~11行后面都会有一个符号“\”，这个相当于“换行符”，表示本行和下一行属于同一行，一般一行写不下的时候就用符号“\”来换行。
+
+第14行是变量SRCDIRS，和变量INCDIRS一样，只是SRCDIRS包含的是整个工程的所有.c 和.S 文件目录。（源代码工程文件）
+比如本例程包含有.c和.S的目录有bsp/clk、bsp/delay、bsp/led 和 project，即：
+`SRCDIRS := project bsp/clk bsp/led bsp/delay `
+后面的裸机例程中我们也要根据实际情况在变量 SRCDIRS 中添加相应的文件目录。 
+
+第19行的变量INCLUDE使用到了函数patsubst，通过函数patsubst给变量INCDIRS添加一个“-I”，即：
+`INCLUDE := -I imx6ul -I bsp/clk -I bsp/led -I bsp/delay `
+
+gcc编译中-I可以指定头文件路径
+
+补充：foreach函数
+
+    在Makefile中，foreach函数用于遍历一个列表，并对列表中的每个元素执行指定的操作。
+    语法：$(foreach <var>,<list>,<text>)
+    <var>：临时变量，用于存储列表中的当前元素。
+    <list>：要遍历的列表，元素之间用空格分隔。
+    <text>：要对每个元素执行的操作，通常会使用<var>来引用当前元素。
+    示例：
+    names := a b c d
+    files := $(foreach n,$(names),$(n).o)
+    结果为$(files)的值将是a.o b.o c.o d.o
+    其中$(n).o表示 取n的值.o表示字符串连上.o最终赋给files
+    wildcard函数见Makefile笔记
+
+第21 行变量SFILES 保存工程中所有的.s汇编文件(包含绝对路径)，变量SRCDIRS已经存放了工程中所有的.c和.S文件，所以我们只需要从里面挑出所有的.S汇编文件即可，这里借助了函数foreach和函数wildcard，最终SFILES如下：
+`SFILES := project/start.S`
+
+第22行变量CFILES和变量SFILES一样，只是CFILES保存工程中所有的.c文件(包含绝对路径)，最终CFILES如下：
+`CFILES = project/main.c bsp/clk/bsp_clk.c bsp/led/bsp_led.c bsp/delay/bsp_delay.c`
+
+第24和25行的变量SFILENDIR和CFILENDIR包含所有的.S汇编文件和.c文件，相比变量SFILES 和CFILES，SFILENDIR 和 CFILNDIR 只是文件名，不包含文件的绝对路径.
+使用函数notdir 将SFILES和CFILES中的路径去掉即可，SFILENDIR和CFILENDIR如下：
+```makefile
+SFILENDIR = start.S 
+CFILENDIR = main.c bsp_clk.c bsp_led.c bsp_delay.c 
+```
+
+补充 notdir函数：
+
+    在Makefile中，notdir函数用于从文件路径中提取文件名部分，去掉目录路径。
+    它的语法如下:$(notdir <names>)
+    <names>：一个或多个文件路径，文件路径之间用空格分隔。
+    notdir函数会从每个文件路径中去掉目录部分，只保留文件名。
+
+第27和28行的变量SOBJS和COBJS是.S和.c文件编译以后对应的.o文件目录，默认所有的文件编译出来的.o文件和源文件在同一个目录中，这里我们将所有的.o文件都放到obj文件夹下，SOBJS和COBJS内容如下：
+
+补充paysubst函数：
+
+    patsubst函数用于模式字符串替换。
+    语法为：$(patsubst <pattern>,<replacement>,<text>)
+    <pattern>：要匹配的模式，可以包含通配符%，表示任意长度的字符串。
+    <replacement>：替换模式，如果包含%，则表示匹配到的部分。
+    <text>：要处理的文本，多个单词以空格分隔
+
+    $(SFILENDIR:.S=.o)：
+    这是一个模式替换操作，将变量SFILENDIR中的所有.S文件替换为.o文件。
+    例如，如果SFILENDIR的值是file1.S file2.S，那么这个操作会将其转换为file1.o file2.o
+    $(patsubst %, obj/%, $(SFILENDIR:.S=.o))  中第一个参数为%表示全匹配，然后目标为obj/% 即加上obj/的前缀
+
+最终结果为
+```makefile
+SOBJS = obj/start.o 
+COBJS = obj/main.o obj/bsp_clk.o obj/bsp_led.o obj/bsp_delay.o 
+```
+第29行变量OBJS是变量SOBJS和COBJS的集合，如下： 
+`OBJS = obj/start.o obj/main.o obj/bsp_clk.o obj/bsp_led.o obj/bsp_delay.o `
+即OBJS表示所有的待组合的.o文件
+完成后，所有的文件将在obj文件夹中
+
+第31行的VPATH是指定搜索目录的，这里指定的搜素目录就是变量SRCDIRS所保存的目录，这样当编译的时候所需的.S和.c文件就会在SRCDIRS中指定的目录中查找。
+**VPATH为Makefile内置变量**
+
+第33行指定了一个伪目标clean，伪目标表示一定执行(可重复执行)
+
+第35~47行就很熟悉了，前几章都已经详细的讲解过了
+
+示例代码中的 Makefile 文件内容重点工作是找到要编译哪些文件？编译的.o文件存放到哪里？
+使用到的编译命令和前面实验使用的一样，其实Makefile的重点工作就是解决“从哪里来到哪里去的”问题，也就是找到要编译的源文件、编译结果存放到哪里？
+真正的编译命令很简洁。 
+
+链接脚本基本一致，但需要修改start.o位置
+
+```C
+1  SECTIONS{ 
+2   . = 0X87800000; 
+3   .text : 
+4   { 
+5       obj/start.o  
+6       *(.text) 
+7   } 
+8   .rodata ALIGN(4) : {*(.rodata*)}      
+9   .data ALIGN(4)   : { *(.data) }     
+10  __bss_start = .;     
+11  .bss ALIGN(4)  : { *(.bss)  *(COMMON) }     
+12  __bss_end = .; 
+13 } 
+```
+#### 13.4.2 编译下载
+
+验证即可
+
+## 第十四章 蜂鸣器实验
+
+前几章试验中的驱动LED灯亮灭属于GPIO的输出控制，本章再巩固一下I.MX6U的GPIO输出控制，在I.MX6U-ALPHA开发板上有一个有源蜂鸣器，通过IO输出高低电平即可控制蜂
+鸣器的开关，本质上也属于GPIO的输出控制
+
+### 14.1 有源蜂鸣器介绍
+
+蜂鸣器常用于计算机、打印机、报警器、电子玩具等电子产品中，常用的蜂鸣器有两种：有源蜂鸣器和无源蜂鸣器。
+这里的有“源”不是电源，而是震荡源。
+有源蜂鸣器内部带有震荡源，所以有源蜂鸣器只要通电就会叫。
+无源蜂鸣器内部不带震荡源，直接用直流电是驱动不起来的，需要2K-5K的方波去驱动。
+I.MX6U-ALPHA开发板使用的是有源蜂鸣器，因此只要给其供电就会工作，I.MX6U-ALPHA开发板所使用的有源蜂鸣器如图
+![alt](./images/Snipaste_2024-11-24_21-23-15.png)
+
+有源蜂鸣器只要通电就会叫，所以我们可以做一个供电电路，这个供电电路可以由一个IO来控制其通断，一般使用三极管来搭建这个电路。（三极管放大电流）
+为什么我们不能像控制LED灯一样，直接将GPIO 接到蜂鸣器的负极，通过 IO 输出高低来控制蜂鸣器的通断。
+因为蜂鸣器工作的电流比LED灯要大，直接将蜂鸣器接到I.MX6U的GPIO上有可能会烧毁IO，所以我们需要通过一个三极管来间接的控制蜂鸣器的通断，相当于加了一层隔离。
+
+### 14.2 硬件原理分析
+
+![alt](./images/Snipaste_2024-11-24_21-25-06.png)
+
+![alt](./images/Snipaste_2024-11-24_21-26-32.png)
+
+通过一个PNP型的三极管8550来驱动蜂鸣器，通过SNVS_TAMPER1这个IO来控制三极管Q1的导通，当SNVS_TAMPER1输出低电平的时候Q1导通，相当于蜂鸣器的正极连接到DCDC_3V3，蜂鸣器形成一个通路，因此蜂鸣器会鸣叫。
+同理，当SNVS_TAMPER1输出高电平的时候Q1不导通，那么蜂鸣器就没有形成一个通路，因此蜂鸣器也就不会鸣叫。
+
+### 14.3 程序编写
+
+新建beep.h文件，保存到bsp/beep文件夹里面，在beep.h里面输入如下内容：
+```C
+1 #ifndef __BSP_BEEP_H 
+2 #define __BSP_BEEP_H 
+3  
+4 #include "imx6ul.h" 
+5  
+6 /* 函数声明 */ 
+7 void beep_init(void); 
+8 void beep_switch(int status); 
+9 #endif 
+```
+新建文件beep.c，然后在beep.c里面输入如下内容：
+```C
+1  #include "bsp_beep.h" 
+2   
+3  /* 
+4   * @description  : 初始化蜂鸣器对应的IO 
+5   * @param        : 无 
+6   * @return       : 无 
+7   */ 
+8  void beep_init(void) 
+9  { 
+10   /* 1、初始化IO复用，复用为GPIO5_IO01 */ 
+11   IOMUXC_SetPinMux(IOMUXC_SNVS_SNVS_TAMPER1_GPIO5_IO01,0);         
+12   
+13   /* 2、配置GPIO1_IO03的IO属性   */ 
+14   IOMUXC_SetPinConfig(IOMUXC_SNVS_SNVS_TAMPER1_GPIO5_IO01,0X10B0); 
+15   
+16   /* 3、初始化GPIO,GPIO5_IO01设置为输出 */ 
+17   GPIO5->GDIR |= (1 << 1);      
+18  
+19   /* 4、设置GPIO5_IO01输出高电平，关闭蜂鸣器 */ 
+20   GPIO5->DR |= (1 << 1);     
+21 } 
+22  
+23 /* 
+24  * @description      : 蜂鸣器控制函数，控制蜂鸣器打开还是关闭 
+25  * @param - status   : 0，关闭蜂鸣器，1 打开蜂鸣器 
+26  * @return            : 无 
+27  */ 
+28 void beep_switch(int status) 
+29 {     
+30   if(status == ON) 
+31       GPIO5->DR &= ~(1 << 1); /* 打开蜂鸣器 */ 
+32   else if(status == OFF) 
+33       GPIO5->DR |= (1 << 1);  /* 关闭蜂鸣器 */ 
+34}
+``` 
+
+总结：
+beep.c文件一共有两个函数：
+beep_init和beep_switch，其中beep_init用来初始化BEEP所使用的GPIO，也就是SNVS_TAMPER1，将其复用为GPIO5_IO01，和上一章的LED灯初始化函数一样。
+beep_switch函数用来控制BEEP的开关，也就是设置GPIO5_IO01的高低电平，很简单。 
+
+main.c中编写
+```C
+1  #include "bsp_clk.h" 
+2  #include "bsp_delay.h" 
+3  #include "bsp_led.h" 
+4  #include "bsp_beep.h" 
+5   
+6  /* 
+7   * @description  : main函数 
+8   * @param        : 无 
+9   * @return       : 无 
+10  */ 
+11 int main(void) 
+12 { 
+13   clk_enable();       /* 使能所有的时钟    */ 
+14   led_init();         /* 初始化led        */ 
+15    beep_init();         /* 初始化beep      */ 
+16  
+17  while(1)             
+18  {    
+19      /* 打开LED0和蜂鸣器 */ 
+20      led_switch(LED0,ON);     
+21      beep_switch(ON); 
+22      delay(500); 
+23
+24      /* 关闭LED0和蜂鸣器 */ 
+25      led_switch(LED0,OFF);    
+26      beep_switch(OFF); 
+27      delay(500); 
+28  } 
+29  
+30  return 0; 
+31 } 
+```
+
+### 14.4 编译下载
+
+#### 14.4.1 编写Makefile与lds
+
+Makefile使用第十三章编写的通用Makefile
+修改变量TARGET为beep
+在变量INCDIRS 头文件目录中添加bsp/beep
+在变量SRCDIRS 源文件目录中追加bsp/beep
+
+lds同上
+
+#### 14.4.2 下载验证
+
+通过即可
+
+## 第十五章 按键输入实验
+
+I.MX6U-ALPHA开发板上有一个按键，按键连接了一个IO，将这个IO配置为输入功能，读取这个IO的值即可获取按键的状态(按下或松开)。
+本章通过这个按键来控制蜂鸣器的开关，通过本章的学习你将掌握如何将I.MX6UL的IO 作为输入来使用。
+
+### 15.1 按键输入简介
+
+按键就两个状态：按下或弹起，将按键连接到一个IO上，通过读取这个IO的值就知道按键是按下的还是弹起的。
+至于按键按下的时候是高电平还是低电平要根据实际电路来判断。
+前面几章我们都是讲解I.MX6U的GPIO作为输出使用，当GPIO连接按键的时候就要做为输入使用。
+关于I.MX6U的GPIO 已经在第八章详细的讲解了，本章我们的主要工作就是配置按键所连接的IO为输入功能，然后读取这个IO的值来判断按键是否按下。
+
+### 15.2 硬件原理分析
+本试验我们用到的硬件有： 
+1）LED灯LED0。 
+2）蜂鸣器。 
+3）1个按键KEY0。 
+
+LED0 以及 beep原理图从上文寻找即可。
+KEY0原理图如下：
+
+![alt](./images/Snipaste_2024-11-24_21-55-52.png)
+
+![alt](./images/Snipaste_2024-11-24_21-56-55.png)
+
+查找参考手册对照表
+![alt](./images/Snipaste_2024-11-24_22-20-15.png)
+
+按键KEY0是连接到I.MX6U的UART1_CTS这个IO上的，KEY0接了一个10K的上拉电阻，因此KEY0没有按下的时候UART1_CTS应该是高电平，当KEY0按下以后UART1_CTS就是低电平
+
+### 15.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 7_key
+
+本试验在上一章试验例程的基础上完成，在工程目录的bsp文件夹中创建名为“key”和“gpio”两个文件夹。
+按键相关的驱动文件都放到“key”文件夹中。
+本章试验我们对GPIO的操作编写一个函数集合，也就是编写一个GPIO驱动文件，GPIO的驱动文件放到“gpio”文件夹里面。 
+
+新建bsp_gpio.c 和 bsp_gpio.h 这两个文件，将这两个文件都保存到刚刚创建的bsp/gpio 文件夹里面，然后在bsp_gpio.h文件夹里面输入如下内容：
+
+```C
+1  #ifndef _BSP_GPIO_H 
+2  #define _BSP_GPIO_H 
+3  #define _BSP_KEY_H 
+4  #include "imx6ul.h" 
+5  /*************************************************************** 
+6  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+7  文件名    : bsp_gpio.h 
+8  作者      : 左忠凯 
+9  版本      : V1.0 
+10 描述      : GPIO操作文件头文件。 
+11 其他      : 无 
+12 论坛      : www.openedv.com 
+13 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+14 ***************************************************************/ 
+15  
+16 /* 枚举类型和结构体定义 */ 
+17 typedef enum _gpio_pin_direction 
+18 { 
+19     kGPIO_DigitalInput = 0U,         /* 输入 无符号整形0*/ 
+20     kGPIO_DigitalOutput = 1U,        /* 输出 无符号整型1*/ 
+21 } gpio_pin_direction_t; 
+22   
+23 /* GPIO配置结构体 */ 
+24 typedef struct _gpio_pin_config 
+25 { 
+26     gpio_pin_direction_t direction; /* GPIO方向:输入还是输出   */ 
+27     uint8_t outputLogic;             /* 如果是输出的话，默认输出电平  */ 
+28 } gpio_pin_config_t; 
+29  
+30 
+31 /* 函数声明 */ 
+32 void gpio_init(GPIO_Type *base, int pin, gpio_pin_config_t *config); 
+33 int gpio_pinread(GPIO_Type *base, int pin); 
+34 void gpio_pinwrite(GPIO_Type *base, int pin, int value); 
+35  
+36 #endif 
+```
+bsp_gpio.h中定义了一个枚举类型gpio_pin_direction_t和结构体gpio_pin_config_t，枚举类型gpio_pin_direction_t表示GPIO方向，输入或输出。结构体gpio_pin_config_t是GPIO的配置结构体，里面有GPIO的方向和默认输出电平两个成员变量
+
+```C
+1  #include "bsp_gpio.h" 
+2  /*************************************************************** 
+3  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+4  文件名    : bsp_gpio.h
+5  作者      : 左忠凯 
+6  版本      : V1.0 
+7  描述      : GPIO操作文件。 
+8  其他      : 无 
+9  论坛      : www.openedv.com 
+10 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+11 ***************************************************************/ 
+12 
+13 /* 
+14  * @description   : GPIO初始化。 
+15  * @param - base  : 要初始化的GPIO组。 
+16  * @param - pin    : 要初始化GPIO在组内的编号。 
+17  * @param - config : GPIO配置结构体。 
+18  * @return           : 无 
+19  */ 
+20 void gpio_init(GPIO_Type *base, int pin, gpio_pin_config_t *config) 
+21 { //GDIR设置GPIO方向
+22   if(config->direction == kGPIO_DigitalInput)  /* 输入 */ 
+23   { 
+24       base->GDIR &= ~( 1 << pin); 
+25   } 
+26    else                                           /* 输出 */ 
+27   { 
+28       base->GDIR |= 1 << pin; 
+29       gpio_pinwrite(base,pin, config->outputLogic);/* 默认输出电平*/ 
+30   } 
+31 } 
+32
+33  /* 
+34   * @description   : 读取指定GPIO的电平值 。 
+35   * @param – base : 要读取的GPIO组。 
+36   * @param - pin   : 要读取的GPIO脚号。 
+37   * @return        : 无 
+38   */ 
+39  int gpio_pinread(GPIO_Type *base, int pin) 
+40  { 
+41    return (((base->DR) >> pin) & 0x1); 
+42  } 
+43  
+44  /* 
+45   * @description   : 指定GPIO输出高或者低电平 。 
+46   * @param – base : 要输出的的GPIO组。 
+47   * @param - pin   : 要输出的GPIO脚号。 
+48   * @param – value : 要输出的电平，1 输出高电平， 0 输出低低电平 
+49   * @return        : 无 
+50   */ 
+51 void gpio_pinwrite(GPIO_Type *base, int pin, int value) 
+52 {DR数据寄存器 
+53    if (value == 0U) 
+54    { 
+55        base->DR &= ~(1U << pin); /* 输出低电平 */ 
+56    } 
+57    else 
+58    { 
+59        base->DR |= (1U << pin); /* 输出高电平 */ 
+60    } 
+61 } 
+```
+GPIO的功能设置只需要配置好GDIR和DR即可
+
+文件bsp_gpio.c中有三个函数：gpio_init、gpio_pinread和gpio_pinwrite，函数gpio_init用于初始化指定的GPIO引脚方向。
+
+我们以后就可以使用函数gpio_init设置指定GPIO为输入还是输出，使用函数gpio_pinread和gpio_pinwrite来读写指定的GPIO。
+
+下面编写按键驱动文件，
+新建bsp_key.c和bsp_key.h这两个文件，将这两个文件都保存到刚刚创建的bsp/key文件夹里面，然后在bsp_key.h文件夹里面输入如下内容：
+
+```C
+1  #ifndef _BSP_KEY_H 
+2  #define _BSP_KEY_H 
+3  #include "imx6ul.h" 
+4  /*************************************************************** 
+5  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+6  文件名    : bsp_key.h 
+7  作者      : 左忠凯 
+8  版本      : V1.0 
+9  描述      : 按键驱动头文件。 
+10 其他      : 无 
+11 论坛      : www.openedv.com 
+12 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+13 ***************************************************************/ 
+14  
+15 /* 定义按键值 */ 
+16 enum keyvalue{ 
+17   KEY_NONE   = 0, 
+18   KEY0_VALUE, 
+19 }; 
+20  
+21 /* 函数声明 */ 
+22 void key_init(void); 
+23 int key_getvalue(void); 
+24  
+25 #endif 
+```
+bsp_key.h文件中定义了一个枚举类型：keyvalue，此枚举类型表示按键值，因为I.MX6UALPHA开发板上只有一个按键，因此枚举类型里面只到KEY0_VALUE.
+
+```C
+1  #include "bsp_key.h" 
+2  #include "bsp_gpio.h" 
+3  #include "bsp_delay.h" 
+4  /*************************************************************** 
+5  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+6  文件名    : bsp_key.c 
+7  作者      : 左忠凯 
+8  版本      : V1.0 
+9  描述      : 按键驱动文件。 
+10 其他      : 无 
+11 论坛      : www.openedv.com 
+12 日志      : 初版V1.0 2019/1/4 左忠凯创建 
+13 ***************************************************************/ 
+14 
+15 /* 
+16  * @description   : 初始化按键 
+17  * @param         : 无 
+18  * @return        : 无 
+19  */ 
+20 void key_init(void) 
+21 {     
+22   gpio_pin_config_t key_config; 
+23   
+24   /* 1、初始化IO复用, 复用为GPIO1_IO18 */ 
+25   IOMUXC_SetPinMux(IOMUXC_UART1_CTS_B_GPIO1_IO18, 0); 
+26 
+27   /* 2、、配置UART1_CTS_B的IO属性   
+28     *bit 16:0 HYS关闭 
+29     *bit [15:14]: 11 默认22K上拉 
+30     *bit [13]: 1 pull功能 
+31     *bit [12]: 1 pull/keeper使能 
+32     *bit [11]: 0 关闭开路输出 
+33     *bit [7:6]: 10 速度100Mhz 
+34     *bit [5:3]: 000 关闭输出 
+35     *bit [0]: 0 低转换率 
+36    */ 
+37   IOMUXC_SetPinConfig(IOMUXC_UART1_CTS_B_GPIO1_IO18, 0xF080); 
+38 
+39   /* 3、初始化GPIO GPIO1_IO18设置为输入*/ 
+40   key_config.direction = kGPIO_DigitalInput; 
+41   gpio_init(GPIO1,18, &key_config); 
+42   
+43 } 
+44  
+45 /* 
+46  * @description   : 获取按键值  
+47  * @param         : 无 
+48  * @return        : 0 没有按键按下，其他值:对应的按键值 
+49  */ 
+50 int key_getvalue(void) 
+51 { 
+52   int ret = 0; 
+53   static unsigned char release = 1;  /* 按键松开 */  
+54  
+55   if((release==1)&&(gpio_pinread(GPIO1, 18) == 0)) /* KEY0按下 */ 
+56   {    
+57       delay(10);      /* 延时消抖 */ 
+58       release = 0;    /* 标记按键按下 */ 
+59       if(gpio_pinread(GPIO1, 18) == 0) 
+60            ret = KEY0_VALUE;//KEY_BALUE=1 
+61   } 
+62   else if(gpio_pinread(GPIO1, 18) == 1)  /* KEY0未按下 */ 
+63   { 
+64       ret = 0; 
+65       release = 1;    /* 标记按键释放 */ 
+66   } 
+67  
+68   return ret;  
+69 } 
+```
+bsp_key.c中一共有两个函数：key_init和key_getvalue，key_init是按键初始化函数，用来初始化按键所使用的UART1_CTS这个IO。
+函数key_init先设置UART1_CTS复用为GPIO1_IO18，然后配置UART1_CTS这个IO为速度为100MHz，默认22K上拉。
+最后调用函数gpio_init来设置GPIO1_IO18为输入功能。
+
+函数key_getvalue用于获取按键值，此函数没有参数，只有一个返回值，返回值表示按键值，返回值为0的话就表示没有按键按下，如果返回其他值的话就表示对应的按键按下了。
+获取按键值其实就是不断的读取GPIO1_IO18的值，如果按键按下的话相应的IO被拉低，那么GPIO1_IO18值就为0，如果按键未按下的话GPIO1_IO18的值就为1。此函数中静态局部变量release表示按键是否释放。
+
+延时介绍：
+理想按键变化：
+![alt](./images/Snipaste_2024-11-24_22-30-10.png)
+
+然而实际而言：
+![alt](./images/Snipaste_2024-11-24_22-30-44.png)
+
+主要由于机械结构问题。
+
+在图中t1时刻按键被按下，但是由于抖动的原因，直到t2时刻才稳定下来，t1到t2这段时间就是抖动。
+一般这段时间就是十几ms左右，从图中可以看出在抖动期间会有多次触发，如果不消除这段抖动的话软件就会误判，本来按键就按下了一次，结果软件读取IO值发现电平多次跳变以为按下了多次。
+所以我们需要跳过这段抖动时间再去读取按键的IO值，也就是至少要在t2时刻以后再去读IO值。
+在“示例”中的57行是延时了大约10ms后再去读取GPIO1_IO18的IO值，如果此时按键的值依旧是0，那么就表示这是一次有效的按键触发。 
+
+注意，本程序中release的存在保证了Key的作用只有一次，同时摁下时，立即生效，且不松开不会读取第二次。
+还有一种按键可以设置为对应不同的值，对应于多个按键。
+其抖动后的延迟可以用while判断，表示松开后生效。
+详情可参见STM32矩阵按键设计。
+即：
+```C
+uint8_t Key_GetNum(void)
+{
+	uint8_t KeyNum = 0;
+	if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_1) == 0)
+	{
+		Delay_ms(20);
+		while (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_1) == 0);
+		Delay_ms(20);
+		KeyNum = 1;
+	}
+	if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == 0)
+	{
+		Delay_ms(20);
+		while (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_11) == 0);
+		Delay_ms(20);
+		KeyNum = 2;
+	}
+	
+	return KeyNum;
+}
+```
+此种设计Key的作用只有一次。
+本文的设计如果改用while循环判断，也可以实现松开后生效：
+即下：
+```c
+55   if((release==1)&&(gpio_pinread(GPIO1, 18) == 0)) /* KEY0按下 */ 
+56   {    
+57       delay(10);      /* 延时消抖 */ 
+58       release = 0;    /* 标记按键按下 */ 
+59       while(gpio_pinread(GPIO1, 18) == 0); 
+60       ret = KEY0_VALUE;//KEY_BALUE=1 
+61   } 
+```
+
+下面是main.c内容
+```c
+1  #include "bsp_clk.h" 
+2  #include "bsp_delay.h" 
+3  #include "bsp_led.h" 
+4  #include "bsp_beep.h" 
+5  #include "bsp_key.h" 
+6   
+7  /* 
+8   * @description   : main函数 
+9   * @param         : 无 
+10  * @return        : 无 
+11  */ 
+12 int main(void) 
+13 { 
+14   int i = 0; 
+15   int keyvalue = 0; 
+16   unsigned char led_state = OFF; 
+17   unsigned char beep_state = OFF; 
+18   
+19   clk_enable();       /* 使能所有的时钟  */ 
+20   led_init();         /* 初始化led      */ 
+21   beep_init();        /* 初始化beep     */ 
+22   key_init();         /* 初始化key      */ 
+23 
+24   while(1)             
+25   {    
+26       keyvalue = key_getvalue(); 
+27       if(keyvalue) //摁下时生效
+28       { 
+29            switch (keyvalue) //匹配模板
+30            { 
+31                 case KEY0_VALUE: 
+32                    beep_state = !beep_state; 
+33                    beep_switch(beep_state); 
+34                 break; 
+35            } 
+36       } 
+37       i++; 
+38       if(i==50) 
+39       { 
+40            i = 0; 
+41            led_state = !led_state; 
+42            led_switch(LED0, led_state); 
+43       } 
+44      delay(10); 
+45   } 
+46   return 0; 
+47 } 
+```
+采用delay(10) i++到50的设计，可以增强按键的实时性
+
+效果：
+main.c函数先初始化led灯、蜂鸣器和按键，然后在while(1)循环中不断的调用函数key_getvalue来读取按键值。
+如果KEY0按下的话就打开/关闭蜂鸣器。LED0作为系统提示指示灯闪烁，闪烁周期大约为500ms。
+
+### 15.4 编译下载
+
+#### 15.4.1 编写MakeFile
+
+Makefile使用第十三章编写的通用Makefile
+修改变量TARGET为key
+在变量INCDIRS和SRCDIRS中追加“bsp/gpio”和“bsp/key 即可
+
+lds 延续上文即可
+
+#### 15.4.2 下载
+
+编译下载即可
+
+## 第十六章 主频与时钟配置实验
+
+在前几章实验中我们都没有涉及到I.MX6U的时钟和主频配置操作，全部使用的默认配置，默认配置下I.MX6U工作频率为396MHz。
+但是I.MX6U系列标准的工作频率为528MHz，有些型号甚至可以工作到696MHz。
+本章我们就学习I.MX6U的时钟系统，学习如何配置I.MX6U的系统时钟和其他的外设时钟，使其工作频率为528MHz，其他的外设时钟源都工作在NXP推荐的频率。
+
+### 16.1 I.MX6U时钟系统
+
+I.MX6U 的系统主频为 528MHz，有些型号可以跑到 696MHz，但是默认情况下内部 boot rom 会将I.MX6U的主频设置为396MHz，这个我们在9.2小节已经讲过了。
+
+我们在使用I.MX6U的时候肯定是要发挥它的最大性能，那么主频肯定要设置到 528MHz(其它型号可以设置更高，比如 696MHz)，其它的外设时钟也要设置到 NXP 推荐的值。
+
+I.MX6U 的系统时钟在《I.MX6ULL/I.MX6UL 参考手册》的第10章“Chapter 10 Clock and Power Management”和第18 章“Chapter 18 Clock Controller Module (CCM)”这两章有详细的讲解。
+
+#### 16.1.1 系统时钟来源
+
+开发板时钟原理图如图：
+
+![alt](./images/Snipaste_2024-11-25_13-17-41.png)
+
+![alt](./images/Snipaste_2024-11-25_13-19-16.png)
+
+可以看出 I.MX6U-ALPHA 开发板的系统时钟来源于两部分：32.768KHz 和24MHz 的晶振.
+其中32.768KHz晶振是I.MX6U 的RTC时钟源，24MHz晶振是I.MX6U内核和其它外设的时钟源，也是我们重点要分析的。
+
+#### 16.1.2 七路PLL时钟源
+
+I.MX6U 的外设有很多，不同的外设时钟源不同，NXP将这些外设的时钟源进行了分组，一共有7组，这7组时钟源都是从24MHz晶振PLL而来的，因此也叫做7组PLL。
+
+![alt](./images/Snipaste_2024-11-25_13-39-02.png)
+
+图中展示了7个PLL的关系，我们依次来看一下这7个PLL都是什么做什么的.
+
+①、 ARM_PLL（PLL1），此路PLL是供**ARM内核**使用的，ARM内核时钟就是由此PLL生成的，此PLL通过编程的方式最高可倍频到1.3GHz。 
+
+②、528_PLL(PLL2)，此路PLL也叫做**System_PLL**，此路PLL是固定的22倍频，不可编程修改。
+因此，此路PLL时钟=24MHz * 22 = 528MHz，这也是为什么此PLL叫做528_PLL的原因。
+此PLL分出了4路PFD，分别为：PLL2_PFD0~PLL2_PFD3，这 4路PFD 和528_PLL共同作为其它很多外设的根时钟源。
+通常528_PLL和这4路PFD是**I.MX6U内部系统总线的时钟源**，比如内处理逻辑单元、DDR接口、NAND/NOR接口等等。
+
+③、USB1_PLL(PLL3)，此路 PLL 主要用于 USBPHY，此 PLL 也有四路 PFD，为：PLL3_PFD0~PLL3_PFD3，USB1_PLL是固定的20倍频，因此USB1_PLL=24MHz *20=480MHz。
+USB1_PLL虽然主要用于USB1PHY，但是其和四路PFD同样也可以作为其他外设的根时钟源。
+
+④、USB2_PLL(PLL7，没有写错！就是PLL7，虽然序号标为4，但是实际是PLL7)，看名字就知道此路PLL是给USB2PHY使用的。
+同样的，此路PLL固定为20倍频，因此也是480MHz。
+
+⑤、ENET_PLL(PLL6),此路 PLL固定为20+5/6倍频，因此ENET_PLL=24MHz * (20+5/6) = 500MHz。
+此路PLL用于生成网络所需的时钟，可以在此PLL的基础上生成25/50/100/125MHz的网络时钟。
+
+⑥、VIDEO_PLL(PLL5),此路 PLL用于显示相关的外设，比如LCD，此路PLL的倍频可以调整，PLL 的输出范围在650MHz~1300MHz。
+此路 PLL 在最终输出的时候还可以进行分频，可选1/2/4/8/16 分频。
+
+⑦、AUDIO_PLL(PLL4),此路 PLL 用于音频相关的外设，此路PLL的倍频可以调整，PLL的输出范围同样也是650MHz~1300MHz.
+此路 PLL 在最终输出的时候也可以进行分频，可选1/2/4 分频。
+
+#### 16.1.3 时钟树简介
+
+讲解了7路PLL，I.MX6U的所有外设时钟源都是从这7路PLL和有些PLL的PFD 而来的，这些外设究竟是如何选择PLL或者PFD的？
+这个就要借助《IMX6ULL 参考手册》里面的时钟树了，在“Chapter 18 Clock Controller Module (CCM)”的 18.3小节给出了I.MX6U详细的时钟树图
+
+补充：
+
+    PLL(Phase Locked Loop)一种利用相位同步产生的电压去调谐压控振荡器以产生目标频率的负反馈控制系统。
+    它通过外部输入的参考信号控制环路内部振荡信号的频率和相位，实现输出信号频率对输入信号频率的自动跟踪。
+    锁相环主要由鉴相器、环路滤波器、分频器、压控振荡器（VCO）和晶体构成，其中VCO是锁相环中的一个重要组成部分。
+
+    ‌PFD（鉴频鉴相器）在PLL（锁相环）中的作用是检测输入参考频率和反馈频率之间的相位差，并将相位差转换为电压信号，进而控制压控振荡器（VCO）的频率，以实现频率和相位的同步‌‌。
+
+![alt](./images/Snipaste_2024-11-25_19-45-04.png)
+![alt](./images/Snipaste_2024-11-25_19-45-14.png)
+![alt](./images/Snipaste_2024-11-25_19-45-28.png)
+
+在图中一共有三部分：CLOCK_SWITCHER、CLOCK ROOT GENERATOR 和SYSTEM CLOCKS。
+其中左边的CLOCK_SWITCHER就是我们上一小节讲解的那7路PLL和8 路PFD，右边SYSTEM CLOCKS就是芯片外设，中间的CLOCK ROOT GENERATOR是最复杂的！
+这一部分就像“月老”一样， 给左边的CLOCK_SWITCHER和右边的SYSTEM CLOCKS进行牵线搭桥。
+
+外设时钟源是有多路可以选择的，CLOCK ROOT GENERATOR就负责从7路PLL 和8路PFD中选择合适的时钟源给外设使用。
+具体操作肯定是设置相应的寄存器，我们以ESAI 这个外设为例:
+ESAI的时钟图如图:
+
+![alt](./images/Snipaste_2024-11-25_19-50-32.png)
+
+在图中我们分为了3部分，这三部分如下：
+
+①、此部分是时钟源选择器，ESAI 有 4 个可选的时钟源：PLL4、PLL5、PLL3_PFD2 和pll3_sw_clk 。
+具体选择哪一路作为 ESAI 的时钟源是由寄存器 CCM->CSCMR2 的ESAI_CLK_SEL 位来决定的，用户可以自由配置:
+
+![alt](./images/Snipaste_2024-11-25_19-54-32.png)
+
+②、此部分是ESAI时钟的前级分频，分频值由寄存器CCM_CS1CDR的ESAI_CLK_PRED来确定的，可设置1~8分频。
+假如现在PLL4=650MHz，我们选择PLL4作为ESAI时钟，前级分频选择2分频，那么此时的时钟就是650/2=325MHz。 
+
+③、此部分又是一个分频器，对②中输出的时钟进一步分频，分频值由寄存器CCM_CS1CDR 的 ESAI_CLK_PODF 来决定，可设置 1~8 分频。
+假如我们设置为8分频的话，经过此分频器以后的时钟就是 325/8=40.625MHz。因此最终进入到 ESAI 外设的时钟就是40.625MHz。
+
+上面我们以外设ESAI 为例讲解了如何根据图来设置外设的时钟频率，其他的外设基本类似的，大家可以自行分析一下其他的外设。
+关于外设时钟配置相关内容全部都在《I.MX6ULL 参考手册》的第18章。
+
+#### 16.1.4 内核时钟设置
+
+I.MX6U 的时钟系统前面几节已经分析的差不多了，现在就可以开始设置相应的时钟频率了。
+先从主频开始，我们将I.MX6U的主频设置为528MHz，根据时钟树可以看到ARM内核时钟如图所示：
+
+![alt](./images/Snipaste_2024-11-25_19-59-39.png)
+
+①、内核时钟源来自于PLL1，假如此时PLL1为996MHz。
+②、通过寄存器CCM_CACRR的ARM_PODF位对PLL1进行分频，可选择1/2/4/8分频，假如我们选择2分频，那么经过分频以后的时钟频率是996/2=498MHz。 
+③、大家不要被此处的2分频给骗了，此处没有进行2分频(我就被这个2分频骗了好久，主频一直配置不正确！)。
+④、经过第②步2分频以后的498MHz就是ARM的内核时钟，也就是I.MX6U的主频。
+
+经过上面几步的分析可知，假如我们要设置内核主频为 528MHz，那么 PLL1 可以设置为1056MHz，寄存器CCM_CACRR的ARM_PODF位设置为2分频即可。
+同理，如果要将主频设置为696MHz，那么PLL1就可以设置为696MHz，CCM_CACRR的ARM_PODF设置为1分频即可。
+
+现在问题很清晰了，寄存器CCM_CACRR的ARM_PODF位很好设置.
+<span style="color:red">PLL1的频率可以通过寄存器CCM_ANALOG_PLL_ARMn 来设置</span>
+
+接下来详细的看一下 CCM_CACRR 和CCM_ANALOG_PLL_ARMn这两个寄存器:
+
+![alt](./images/Snipaste_2024-11-25_20-05-24.png)
+
+CCM_CACRR:
+
+![alt](./images/Snipaste_2024-11-25_20-06-28.png)
+
+寄存器CCM_CACRR只有ARM_PODF位，可以设置为0\~7，分别对应1\~8分频。如果要设置为2分频的话CCM_CACRR就要设置为1。
+
+CCM_ANALOG_PLL_ARMn:
+
+![alt](./images/Snipaste_2024-11-25_20-07-42.png)
+![alt](./images/Snipaste_2024-11-25_20-08-03.png)
+
+在寄存器CCM_ANALOG_PLL_ARMn中重要的位如下：
+
+**ENABLE**: 时钟输出使能位，此位设置为1使能PLL1输出，如果设置为0的话就关闭PLL1输出。
+
+**DIV_SELECT**: 此七位设置PLL1的输出频率，可设置范围为：54~108。
+PLL1 CLK = Fin * div_seclec/2.0，Fin=24MHz。
+如果 PLL1 要输出 1056MHz的话，div_select就要设置为88。
+
+在修改PLL1时钟频率的时候我们需要先将内核时钟源改为其他的时钟源，PLL1可选择的时钟源如图：
+![alt](./images/Snipaste_2024-11-25_20-14-20.png)
+取下部分
+![alt](./images/Snipaste_2024-11-25_20-11-54.png)
+
+①、pll1_sw_clk 也就是PLL1 的最终输出频率。
+
+②、此处是一个选择器，选择 pll1_sw_clk 的时钟源，由寄存器 CCM_CCSR 的PLL1_SW_CLK_SEL 位决定 pll1_sw_clk 是选择 pll1_main_clk 还是 step_clk。
+正常情况下应该选择pll1_main_clk，但是如果要对pll1_main_clk(PLL1)的频率进行调整的话，比如我们要设置PLL1=1056MHz，此时就要先将pll1_sw_clk切换到step_clk 上。
+等pll1_main_clk 调整完成以后再切换回来。 
+
+③、此处也是一个选择器，选择step_clk的时钟源，由寄存器CCM_CCSR的STEP_SEL位来决定step_clk 是选择 osc_clk 还是 secondary_clk。一般选择 osc_clk，也就是 24MHz 的晶振。
+
+故而我们需要调整两个寄存器，CCSR:Pll1_sw_clk_sel 和 CCSR:step_sel
+
+![alt](./images/Snipaste_2024-11-25_20-18-16.png)
+
+寄存器CCM_CCSR我们只用到了STEP_SEL、PLL1_SW_CLK_SEL这两个位，一个是用来选择step_clk 时钟源的，一个是用来选择pll1_sw_clk时钟源的。
+
+到这里，修改I.MX6U主频的步骤就很清晰了，修改步骤如下：
+
+①、 设置寄存器CCSR的STEP_SEL位，设置step_clk的时钟源为24M的晶振。 
+②、设置寄存器 CCSR 的 PLL1_SW_CLK_SEL 位，设置 pll1_sw_clk 的时钟源为
+step_clk=24MHz，通过这一步我们就将 I.MX6U 的主频先设置为 24MHz，直接来自于外部的24M晶振。 
+③、设置寄存器CCM_ANALOG_PLL_ARMn，将pll1_main_clk(PLL1)设置为1056MHz。 
+④、设置寄存器 CCSR 的 PLL1_SW_CLK_SEL 位，重新将 pll1_sw_clk 的时钟源切换回pll1_main_clk，切换回来以后的pll1_sw_clk 就等于 1056MHz。 
+⑤、最后设置寄存器CCM_CACRR 的 ARM_PODF 为 2 分频，I.MX6U 的内核主频就为1056/2=528MHz。 
+
+注意：
+
+    ‌PLL1是I.MX6U处理器中的一个时钟源‌，主要用于生成ARM内核时钟。
+    PLL1通过编程可以倍频到最高1.3GHz‌。
+
+#### 16.1.5 PED时钟设置
+
+设置好主频以后我们还需要设置好其他的PLL和PFD时钟，PLL1上一小节已经设置了，PLL2、PLL3 和 PLL7 固定为 528MHz、480MHz 和 480MHz，PLL4~PLL6 都是针对特殊外设的，用到的时候再设置。
+
+接下来重点就是设置PLL2和PLL3的各自4路PFD，NXP推荐的这8路PFD频率如表：
+| PFD       | NXP推荐值            |
+| --------- | -------------------- |
+| PLL2_PFD0 | 352MHz               |
+| PLL2_PFD1 | 594MHz               |
+| PLL2_PFD2 | 400MHz(实际为396MHz) |
+| PLL2_PFD3 | 297MHz               |
+| PLL3_PFD0 | 720MHz               |
+| PLL3_PFD1 | 540MHz               |
+| PLL3_PFD2 | 508.2MHz             |
+| PLL3_PFD3 | 454.7MHz             |
+
+先设置PLL2的4路PFD频率，用到寄存器是CCM_ANALOG_PFD_528n
+![alt](./images/Snipaste_2024-11-25_20-33-48.png)
+
+CCM_ANALOG_PFD_528n结构：
+![alt](./images/Snipaste_2024-11-25_20-34-30.png)
+
+寄存器 CCM_ANALOG_PFD_528n 其实分为四组，分别对应PFD0~PFD3，每组8个bit，我们就以PFD0为例，看一下如何设置PLL2_PFD0的频率:
+
+![alt](./images/Snipaste_2024-11-25_20-35-49.png)
+
+**PFD0_FRAC**: PLL2_PFD0 的分频数，PLL2_PFD0的计算公式为528*18/PFD0_FRAC，此位可设置的范围为12~35。
+如果 PLL2_PFD0 的频率要设置为 352MHz 的话PFD0_FRAC=528*18/352=27。
+
+**PFD0_STABLE**: 此位为只读位，可以通过读取此位判断PLL2_PFD0是否稳定。 
+
+**PFD0_CLKGATE**: PLL2_PFD0 输出使能位，为1的时候关闭PLL2_PFD0的输出，为0的时候使能输出
+
+如果我们要设置 PLL2_PFD0 的频率为 352MHz 的话就需要设置 PFD0_FRAC 为 27，PFD0_CLKGATE 为 0 。 
+PLL2_PFD1~PLL2_PFD3 设置类似，频率计算公式都是528*18/PFDX_FRAC(X=1~3) ；
+因此 PLL2_PFD1=594MHz 的话，PFD1_FRAC=16 ；
+PLL2_PFD2=400MHz 的话 PFD2_FRAC不能整除，因此取最近的整数值，即PFD2_FRAC=24，这样PLL2_PFD2实际为396MHz；
+PLL2_PFD3=297MHz的话，PFD3_FRAC=32。
+
+下面设置PLL3_PFD0~PLL3_PFD3，使用到的寄存器是CCM_ANALOG_PFD_480n：
+
+![alt](./images/Snipaste_2024-11-25_20-38-58.png)
+
+从图可以看出，寄存器CCM_ANALOG_PFD_480n和CCM_ANALOG_PFD_528n的结构是一模一样的，只是一个是PLL2的，一个是PLL3的。
+寄存器位的含义也是一样的，只是频率计算公式不同，比如 PLL3_PFDX=480*18/PFDX_FRAC(X=0~3) 。
+
+如果PLL3_PFD0=720MHz 的话，PFD0_FRAC=12；
+如果 PLL3_PFD1=540MHz的话，PFD1_FRAC=16;
+如果 PLL3_PFD2=508.2MHz 的话，PFD2_FRAC=17；
+如果 PLL3_PFD3=454.7MHz 的话，PFD3_FRAC=19。 
+
+#### 16.1.6 AHB、IPG和PERCLK时钟设置
+
+7 路PLL和8路PFD设置完成以后最后还需要设置AHB_CLK_ROOT和IPG_CLK_ROOT的时钟，I.MX6U外设根时钟可设置范围如图所示：
+![alt](./images/Snipaste_2024-11-25_20-48-18.png)
+![alt](./images/Snipaste_2024-11-25_20-42-49.png)
+
+图中给出了大多数外设的根时钟设置范围，AHB_CLK_ROOT最高可以设置132MHz，IPG_CLK_ROOT和PERCLK_CLK_ROOT最高可以设置66MHz。
+那我们就将AHB_CLK_ROOT、IPG_CLK_ROOT 和 PERCLK_CLK_ROOT 分别设置为 132MHz、66MHz、66MHz。
+
+![alt](./images/Snipaste_2024-11-25_20-49-20.png)
+分部分分析：
+![alt](./images/Snipaste_2024-11-25_20-49-57.png)
+
+①、此选择器用来选择pre_periph_clk的时钟源，可以选择PLL2、PLL2_PFD2、PLL2_PFD0和PLL2_PFD2/2。
+寄存器CCM_CBCMR的PRE_PERIPH_CLK_SEL 位决定选择哪一个，默认选择PLL2_PFD2，因此pre_periph_clk=PLL2_PFD2=396MHz。
+
+②、此选择器用来选择periph_clk的时钟源，由寄存器CCM_CBCDR的PERIPH_CLK_SEL位与PLL_bypass_en2 组成的或来选择。
+当CCM_CBCDR的PERIPH_CLK_SEL 位为0的时候periph_clk=pr_periph_clk=396MHz。
+
+③、通过CBCDR的AHB_PODF位来设置AHB_CLK_ROOT的分频值，可以设置1~8分频，如果想要AHB_CLK_ROOT=132MHz的话就应该设置为3分频：396/3=132MHz。
+图中虽然写的是默认4分频，但是I.MX6U的内部boot rom将其改为了3分频！ 
+
+④、通过CBCDR的IPG_PODF位来设置IPG_CLK_ROOT的分频值，可以设置1~4分频，IPG_CLK_ROOT 时钟源是AHB_CLK_ROOT，要想IPG_CLK_ROOT=66MHz的话就应该设置2 分频：132/2=66MHz。 
+
+最后要设置的就是PERCLK_CLK_ROOT时钟频率，其时钟结构图:
+
+![alt](./images/Snipaste_2024-11-25_20-53-48.png)
+
+从图可 以看出，PERCLK_CLK_ROOT 来源有两种：OSC(24MHz)和IPG_CLK_ROOT，由寄存器 CCM_CSCMR1 的 PERCLK_CLK_SEL 位来决定，如果为 0 的话PERCLK_CLK_ROOT 的时钟源就是 IPG_CLK_ROOT=66MHz 。
+可以通过寄存器CCM_CSCMR1的PERCLK_PODF位来设置分频，如果要设置PERCLK_CLK_ROOT为66MHz的话就要设置为1分频。
+
+在上面的设置中用到了三个寄存器：CCM_CBCDR、CCM_CBCMR和CCM_CSCMR1，我们依次来看一下这些寄存器
+
+CCM_CBCDR:
+![alt](./images/Snipaste_2024-11-25_20-56-32.png)
+
+各个位的解释如下：
+
+**PERIPH_CLK2_PODF**：periph2 时钟分频，可设置0~7，分别对应1~8分频。 
+**PERIPH2_CLK_SEL**：选择peripheral2 的主时钟，如果为0的话选择PLL2，如果为1的话选择periph2_clk2_clk。修改此位会引起一次与 MMDC的握手，所以修改完成以后要等待握手完成，握手完成信号由寄存器CCM_CDHIPR中指定位表示。 
+**PERIPH_CLK_SEL**：peripheral 主时钟选择，如果为 0 的话选择 PLL2，如果为 1 的话选择periph_clk2_clock。修改此位会引起一次与MMDC的握手，所以修改完成以后要等待握手完成，握手完成信号由寄存器CCM_CDHIPR中指定位表示。 
+**AXI_PODF**：axi 时钟分频，可设置0~7，分别对应1~8分频。 
+**AHB_PODF**：ahb 时钟分频，可设置 0~7，分别对应 1~8 分频。修改此位会引起一次与MMDC的握手，所以修改完成以后要等待握手完成，握手完成信号由寄存CCM_CDHIPR中指定位表示。 
+**IPG_PODF**：ipg时钟分频，可设置0~3，分别对应1~4分频。 
+**AXI_ALT_CLK_SEL**：axi_alt 时钟选择，为 0 的话选择 PLL2_PFD2，如果为 1 的话选择PLL3_PFD1。 
+**AXI_CLK_SEL**：axi 时钟源选择，为0 的话选择periph_clk，为 1 的话选择 axi_alt 时钟。 
+**FABRIC_MMDC_PODF**：fabric/mmdc 时钟分频设置，可设置0~7，分别对应1~8分频。 
+**PERIPH2_CLK2_PODF**：periph2_clk2 的时钟分频，可设置0~7，分别对应1~8分频。
+
+CCM_CBCMR：
+![alt](./images/Snipaste_2024-11-25_20-59-43.png)
+寄存器CCM_CBCMR各个位的含义如下:
+
+**LCDIF1_PODF**：lcdif1 的时钟分频，可设置0~7，分别对应1~8分频。 
+**PRE_PERIPH2_CLK_SEL**：pre_periph2 时钟源选择，00选择PLL2，01选择PLL2_PFD2，10 选择PLL2_PFD0，11 选择PLL4。 
+**PERIPH2_CLK2_SEL**：periph2_clk2 时钟源选择为0的时候选择pll3_sw_clk，为 1的时候选择OSC。 
+**PRE_PERIPH_CLK_SEL**：pre_periph 时钟源选择，00选择PLL2，01选择PLL2_PFD2，10选择PLL2_PFD0，11 选择PLL2_PFD2/2。 
+**PERIPH_CLK2_SEL**：peripheral_clk2 时钟源选择，00 选择pll3_sw_clk，01 选择 osc_clk，10 选择pll2_bypass_clk。 
+
+CCM_CSCMR1:
+![alt](./images/Snipaste_2024-11-25_21-01-14.png)
+此寄存器主要用于外设时钟源的选择，比如QSPI1、ACLK、GPMI、BCH等外设，我们重点看一下下面两个位:
+
+**PERCLK_CK_SEL**：perclk 时钟源选择，为0的话选择ipg clk，为1的话选择osc clk。
+**PERCLK_PODF**：perclk的时钟分频，可设置0~7，分别对应1~8分频。
+
+至此，此三个寄存器介绍完毕！
+需要注意的是：
+在修改如下时钟选择器或者分频器的时候会引起与MMDC的握手发生：
+①、mmdc_podf 
+②、periph_clk_sel 
+③、periph2_clk_sel 
+④、arm_podf 
+⑤、ahb_podf 
+发生握手信号以后需要等待握手完成，寄存器CCM_CDHIPR中保存着握手信号是否完成，如果相应的位为1的话就表示握手没有完成，如果为0的话就表示握手完成，很简单，这里就不详细的列举寄存器CCM_CDHIPR中的各个位了。 
+
+补充：MMDC握手
+
+    MMDC（Multi-Mode DDR Controller，多模式DDR控制器）是一种用于管理和控制动态随机存储器（DRAM）的硬件模块，通常应用于嵌入式系统、片上系统（SoC）或专用集成电路（ASIC）中。
+    它主要负责协调处理器或其他模块与DDR存储器之间的数据传输，确保存储器的高效使用和系统性能的最大化。
+    MMDC（Multimedia Domain Controller）握手通常是指MMDC与其配套的外设（如存储器、显示器等）或主机之间的数据传输初始化和握手协议过程。
+
+另外在修改arm_podf和ahb_podf的时候需要先关闭其时钟输出，等修改完成以后再打开，否则的话可能会出现在修改完成以后没有时钟输出的问题。
+本教程需要修改寄存器CCM_CBCDR的AHB_PODF位来设置AHB_ROOT_CLK的时钟，所以在修改之前必须先关闭AHB_ROOT_CLK的输出。
+但是笔者没有找到相应的寄存器，因此目前没法关闭，那也就没法设置AHB_PODF了。
+不过**AHB_PODF内部boot rom设置为了3分频**，如果pre_periph_clk的时钟源选择PLL2_PFD2的话，AHB_ROOT_CLK也是396MHz/3=132MHz。
+
+至此，I.MX6U 的时钟系统就讲解完了，I.MX6U 的时钟系统还是很复杂的，大家要结合《I.MX6ULL 参考手册》中时钟相关的结构图来学习。
+本章我们也只是讲解了如何进行主频、PLL、PFD 和一些总线时钟的设置，关于具体的外设时钟设置我们在学习到的时候在详细的讲解。
+
+### 16.2 硬件原理分析
+
+时钟原理图分析参考16.1.1小节
+
+### 16.3 程序编写
+
+补充：
+
+    pll1_main_clk
+    定义：
+    pll1_main_clk 是由 PLL1（Phase Locked Loop 1）生成的主要时钟信号，直接输出自 PLL 的频率锁相环模块。
+    该信号通常具有较高的精度和稳定性，用于为系统中对高频率或高精度时钟有需求的模块提供时钟。
+    特点：
+    源头直接：由 PLL1 的频率生成逻辑直接提供。
+    固定频率：频率一般是通过硬件或软件配置，固定生成的（如 800 MHz）。
+    用途：
+    可用于系统总线时钟、核心处理器时钟或其他需要高性能的模块。
+
+    pll1_sw_clk
+    定义：
+    pll1_sw_clk 是通过切换（Switch）逻辑生成的时钟信号，可能从多个时钟源中选择一个，包括 pll1_main_clk 和备用时钟（如外部晶振或内部低速时钟）。
+    它允许动态切换时钟源，以便在系统中实现灵活的时钟管理。
+    特点：
+    动态选择：通过寄存器或硬件控制，可以选择使用 pll1_main_clk 或其他时钟源。
+    灵活性：可根据系统状态（如低功耗模式、调试模式）切换到不同的时钟。
+    用途：
+    在低功耗模式下，可能切换到更低频率的时钟源。
+    在正常运行模式下，可以选择高性能时钟源（如 pll1_main_clk）
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 8_clk
+
+本试验在上一章试验“7_key”的基础上完成，因为本试验是配置I.MX6U的系统时钟，因此我们直接在文件“bsp_clk.c”上做修改，修改bsp_clk.c的内容如下：
+
+```C
+1   #include "bsp_clk.h" 
+2    
+3   /*************************************************************** 
+4   Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved. 
+5   文件名   : bsp_clk.c 
+6   作者     : 左忠凯 
+7   版本     : V1.0 
+8   描述     : 系统时钟驱动。 
+9   其他     : 无 
+10  论坛     : www.openedv.com 
+11  日志     : 初版V1.0 2019/1/3 左忠凯创建 
+12   
+13            V2.0     2019/1/3 左忠凯修改 
+14            添加了函数imx6u_clkinit()，完成I.MX6U的系统时钟初始化 
+15  ***************************************************************/ 
+16   
+17  /* 
+18   * @description : 使能I.MX6U所有外设时钟 
+19   * @param       : 无 
+20   * @return      : 无 
+21   */ 
+22  void clk_enable(void) 
+23  { 
+24      CCM->CCGR0 = 0XFFFFFFFF; 
+25      CCM->CCGR1 = 0XFFFFFFFF; 
+26      CCM->CCGR2 = 0XFFFFFFFF; 
+27      CCM->CCGR3 = 0XFFFFFFFF; 
+28      CCM->CCGR4 = 0XFFFFFFFF; 
+29      CCM->CCGR5 = 0XFFFFFFFF; 
+30      CCM->CCGR6 = 0XFFFFFFFF; 
+31  } 
+32   
+33  /* 
+34   * @description : 初始化系统时钟528Mhz，并且设置PLL2和PLL3各个 
+35                    PFD时钟,所有的时钟频率均按照I.MX6U官方手册推荐的值. 
+36   * @param       : 无 
+37   * @return      : 无 
+38   */ 
+39  void imx6u_clkinit(void) 
+40  { 
+41      unsigned int reg = 0; 
+42      /* 1、设置ARM内核时钟为528MHz */ 
+43      /* 1.1、判断当使用哪个时钟源启动的，正常情况下是由pll1_sw_clk驱动的，而 
+44       *      pll1_sw_clk有两个来源：pll1_main_clk和step_clk，如果要 
+45       *      让I.MX6ULL跑到528M，那必须选择pll1_main_clk作为pll1的时钟 
+46       *      源。如果我们要修改pll1_main_clk时钟的话就必须先将pll1_sw_clk从 
+47       *      pll1_main_clk切换到step_clk,当修改完以后再将pll1_sw_clk切换 
+48       *      回pll1_main_cl，step_clk等于24MHz。 
+49       */ 
+50
+51      if((((CCM->CCSR) >> 2) & 0x1 ) == 0) /*   pll1_main_clk */ 
+52      {    
+53          CCM->CCSR &= ~(1 << 8);  /* 配置step_clk时钟源为24MHz OSC */     
+54          CCM->CCSR |= (1 << 2);   /* 配置pll1_sw_clk时钟源为step_clk */ 
+55      } 
+56  
+57      /* 1.2、设置pll1_main_clk为1056MHz,也就是528*2=1056MHZ, 
+58       *      因为pll1_sw_clk进ARM内核的时候会被二分频！ 
+59       *      配置CCM_ANLOG->PLL_ARM寄存器 
+60       *      bit13: 1 使能时钟输出 
+61       *      bit[6:0]: 88, 由公式：Fout = Fin * div_select / 2.0， 
+62       *      1056=24*div_select/2.0, 得出：div_select=88。   
+63       */ 
+64      CCM_ANALOG->PLL_ARM = (1 << 13) | ((88 << 0) & 0X7F);  
+65      CCM->CCSR &= ~(1 << 2);/* 将pll_sw_clk时钟切换回pll1_main_clk */ 
+66      CCM->CACRR = 1;    /* ARM内核时钟为pll1_sw_clk/2=1056/2=528Mhz */ 
+67 
+68      /* 2、设置PLL2(SYS PLL)各个PFD */ 
+69      reg = CCM_ANALOG->PFD_528; 
+70      reg &= ~(0X3F3F3F3F); /* 清除原来的设置                   */ 
+71      reg |= 32<<24;            /* PLL2_PFD3=528*18/32=297Mhz   */ 
+72      reg |= 24<<16;            /* PLL2_PFD2=528*18/24=396Mhz   */ 
+73      reg |= 16<<8;              /* PLL2_PFD1=528*18/16=594Mhz   */ 
+74      reg |= 27<<0;             /* PLL2_PFD0=528*18/27=352Mhz   */ 
+75      CCM_ANALOG->PFD_528=reg; /* 设置PLL2_PFD0~3                 */ 
+76 
+77      /* 3、设置PLL3(USB1)各个PFD */ 
+78      reg = 0;                    /* 清零   */ 
+79      reg = CCM_ANALOG->PFD_480; 
+80      reg &= ~(0X3F3F3F3F);    /* 清除原来的设置                     */ 
+81      reg |= 19<<24;            /* PLL3_PFD3=480*18/19=454.74Mhz    */ 
+82      reg |= 17<<16;            /* PLL3_PFD2=480*18/17=508.24Mhz    */ 
+83      reg |= 16<<8;             /* PLL3_PFD1=480*18/16=540Mhz        */ 
+84      reg |= 12<<0;             /* PLL3_PFD0=480*18/12=720Mhz       */ 
+85      CCM_ANALOG->PFD_480=reg;    /* 设置PLL3_PFD0~3                */   
+86  
+87      /* 4、设置AHB时钟 最小6Mhz， 最大132Mhz */ 
+88      CCM->CBCMR &= ~(3 << 18);  /* 清除设置*/  
+89      CCM->CBCMR |= (1 << 18);   /* pre_periph_clk=PLL2_PFD2=396MHz */ 
+90      CCM->CBCDR &= ~(1 << 25);  /* periph_clk=pre_periph_clk=396MHz */ 
+91      while(CCM->CDHIPR & (1 << 5));/* 等待握手完成 */ 
+92           
+93      /* 修改AHB_PODF位的时候需要先禁止AHB_CLK_ROOT的输出，但是 
+94       * 我没有找到关闭AHB_CLK_ROOT输出的的寄存器，所以就没法设置。 
+95       * 下面设置AHB_PODF的代码仅供学习参考不能直接拿来使用！！ 
+96       * 内部boot rom将AHB_PODF设置为了3分频，即使我们不设置AHB_PODF， 
+97       * AHB_ROOT_CLK也依旧等于396/3=132Mhz。 
+98       */ 
+99  #if 0 
+100     /* 要先关闭AHB_ROOT_CLK输出，否则时钟设置会出错 */ 
+101     CCM->CBCDR &= ~(7 << 10);/* CBCDR的AHB_PODF清零 */ 
+102     CCM->CBCDR |= 2 << 10; /* AHB_PODF 3分频，AHB_CLK_ROOT=132MHz */ 
+103     while(CCM->CDHIPR & (1 << 1));/* 等待握手完成 */ 
+104 #endif 
+105      
+106     /* 5、设置IPG_CLK_ROOT最小3Mhz，最大66Mhz */ 
+107     CCM->CBCDR &= ~(3 << 8); /* CBCDR的IPG_PODF清零 */ 
+108     CCM->CBCDR |= 1 << 8;    /* IPG_PODF 2分频，IPG_CLK_ROOT=66MHz */ 
+109      
+110     /* 6、设置PERCLK_CLK_ROOT时钟 */ 
+111     CCM->CSCMR1 &= ~(1 << 6);   /* PERCLK_CLK_ROOT时钟源为IPG */ 
+112     CCM->CSCMR1 &= ~(7 << 0);   /* PERCLK_PODF位清零，即1分频 */ 
+113 } 
+```
+
+文件bsp_clk.c中一共有两个函数：
+clk_enable和imx6u_clkinit，其中函数clk_enable前面已经讲过了，就是使能I.MX6U的所有外设时钟。
+函数imx6u_clkinit才是本章的重点，imx6u_clkinit先设置系统主频为528MHz，然后根据我们上一小节分析的I.MX6U时钟系统来设置8路PFD，最后设置AHB、IPG和PERCLK的时钟频率。 
+
+在bsp_clk.h文件中添加函数imx6u_clkinit的声明，最后修改main.c文件，在main函数里面调用imx6u_clkinit来初始化时钟:
+```C
+1  int main(void) 
+2  { 
+3    int i = 0; 
+4    int keyvalue = 0; 
+5    unsigned char led_state = OFF; 
+6    unsigned char beep_state = OFF; 
+7   
+8    imx6u_clkinit();     /* 初始化系统时钟       */ 
+9    clk_enable();     /* 使能所有的时钟     */ 
+10   led_init();          /* 初始化led          */ 
+11   beep_init();         /* 初始化beep         */ 
+12   key_init();          /* 初始化key         */ 
+13  
+14   /* 省略掉其它代码 */ 
+15 } 
+```
+上述代码的第8行就是时钟初始化函数，时钟初始化函数最好放到最开始的地方调用。 
+
+### 16.4 编译下载
+
+Makefile和lds保持不变，可以将TARGET修改位clk
+
+进行测试即可，本试验的主频被配置成了528MHz，因此代码执行速度会变快，所以延时函
+数的运行就会加快，故而效果就是LED闪烁速度快一些 。
 
