@@ -7104,3 +7104,293 @@ lds不变
 
 定时器是最常用的外设，常常需要使用定时器来完成精准的定时功能，I.MX6U 提供了多种硬件定时器，有些定时器功能非常强大。
 本章我们从最基本的 **EPIT 定时器** 开始，学习如何配置 EPIT 定时器，使其按照给定的时间，周期性的产生定时器中断，在定时器中断里面我们可以做其它的处理，比如翻转 LED 灯。
+
+### 18.1 EPIT定时器
+
+EPIT 的全称是：Enhanced Periodic Interrupt Timer，直译过来就是增强的周期中断定时器，它主要是完成周期性中断定时的。
+学过 STM32 的话应该知道，STM32 里面的定时器还有很多其它的功能，比如输入捕获、PWM 输出等等。
+但是 I.MX6U 的 EPIT 定时器只是完成周期性中断定时的，仅此一项功能！
+至于输入捕获、PWM 输出等这些功能，I.MX6U 由其它的外设来完成。
+
+EPIT 是一个 32 位定时器，在处理器几乎不用介入的情况下提供精准的定时中断，软件使能以后 EPIT 就会开始运行，EPIT 定时器有如下特点：
+
+①、时钟源可选的 32 位向下计数器。
+②、12 位的分频值。
+③、当计数值和比较值相等的时候产生中断。
+
+定时器结构
+![alt](./images/Snipaste_2024-11-27_18-45-27.png)
+
+![alt](./images/Snipaste_2024-11-27_18-46-34.png)
+
+各部分硬件结构功能：
+
+①、这是个多路选择器，用来选择 EPIT 定时器的时钟源，EPIT 共有 3 个时钟源可选择，ipg_clk、ipg_clk_32k 和 ipg_clk_highfreq。
+
+②、这是一个 12 位的分频器，负责对时钟源进行分频，12 位对应的值是 0~4095，对应着1~4096 分频。
+
+③、经过分频的时钟进入到 EPIT 内部，在 EPIT 内部有三个重要的寄存器：
+计数寄存器(EPIT_CNR)、加载寄存器(EPIT_LR)和比较寄存器(EPIT_CMPR)，这三个寄存器都是 32 位的。
+EPIT 是一个向下计数器，也就是说给它一个初值，它就会从这个给定的初值开始递减，直到减为 0，计数寄存器(EPIT_CNR)里面保存的就是当前的计数值。
+如果 EPIT 工作在 set-and-forget 模式下，当计数寄存器里面的值减少到 0，EPIT 就会重新从加载寄存器读取数值到计数寄存器里面，重新开始向下计数。
+比较寄存器里面保存的数值用于和计数寄存器里面的计数值比较，如果相等的话就会产生一个比较事件。
+
+④、比较器。
+
+⑤、EPIT 可以设置引脚输出，如果设置了的话就会通过指定的引脚输出信号。
+
+⑥、产生比较中断，也就是定时中断。
+
+EPIT 定时器有两种工作模式：set-and-forget 和 free-running，这两个工作模式的区别如下：
+
+**set-and-forget 模式**：EPITx_CR(x=1，2)寄存器的 RLD 位置 1 的时候 EPIT 工作在此模式下，在此模式下 EPIT 的计数器从加载寄存器 EPITx_LR 中获取初始值，不能直接向计数器寄存器写入数据。
+不管什么时候，只要计数器计数到 0，那么就会从加载寄存器 EPITx_LR 中重新加载数据到计数器中，周而复始。
+
+**free-running 模式**：EPITx_CR 寄存器的 RLD 位清零的时候 EPIT 工作在此模式下，当计数器计数到0以后会重新从0XFFFFFFFF开始计数，并不是从加载寄存器EPITx_LR中获取数据。
+
+接下来看一下 EPIT 重要的几个寄存器.
+
+- EPITx_CR 定时器控制寄存器:
+
+![alt](./images/Snipaste_2024-11-27_18-54-00.png)
+
+**CLKSRC(bit25:24)**：EPIT 时钟源选择位，为 0 的时候关闭时钟源，1 的时候选择选择Peripheral 时钟(ipg_clk)，为 2 的时候选择 High-frequency 参考时钟(ipg_clk_highfreq)，为 3 的时候选择 Low-frequency 参考时钟(ipg_clk_32k)。
+在本例程中，我们设置为 1，也就是选择 ipg_clk作为 EPIT 的时钟源，<span style="color:red;">ipg_clk=66MHz</span>。
+
+**PRESCALAR(bit15:4)**：EPIT 时钟源分频值，可设置范围 0~4095，分别对应 1~4096 分频。
+
+**RLD(bit3)**：EPIT 工作模式，为 0 的时候工作在 free-running 模式，为 1 的时候工作在 setand-forget 模式。
+本章例程设置为 1，也就是工作在 set-and-forget 模式。
+
+**OCIEN(bit2)**：比较中断使能位，为 0 的时候关闭比较中断，为 1 的时候使能比较中断，本章试验要使能比较中断。
+
+**ENMOD(bit1)**：设置计数器初始值，为 0 时计数器初始值等于上次关闭 EPIT 定时器以后计数器里面的值，为 1 的时候来源于加载寄存器。
+
+**EN(bit0)**：EPIT 使能位，为 0 的时候关闭 EPIT，为 1 的时候使能 EPIT。
+
+- EPITx_SR： EPIT状态寄存器
+
+![alt](./images/Snipaste_2024-11-27_19-09-31.png)
+
+寄存器 EPITx_SR 只有一个位有效，那就是 OCIF(bit0)，这个位是比较中断标志位，为 0 的时候表示没有比较事件发生，为 1 的时候表示有比较事件发生。
+
+当比较中断发生以后需要手动清除此位，此位是写 1 清零的。
+
+补充：
+
+    定时器触发事件是指定时器的状态变化或计数器达到特定值时产生的信号，它可以用于驱动一些操作，但不一定涉及中断。
+    定时器触发中断是指定时器达到设定条件后产生的中断信号，这会导致MCU跳转到中断服务程序进行处理
+
+此外：
+
+寄存器 EPITx_LR、EPITx_CMPR 和 EPITx_CNR 分别为加载寄存器、比较寄存器和计数寄存器，这三个寄存器都是用来存放数据的，很简单。
+
+本章我们使用 EPIT 产生定时中断，然后在中断服务函数里面翻转 LED0，接下来以 EPIT1 为例，讲解需要哪些步骤来实现这个功能。
+EPIT 的配置步骤如下：
+
+1. **设置EPIT1时钟源**
+
+设置寄存器 EPIT1_CR 寄存器的 CLKSRC(bit25:24)位，选择 EPIT1 的时钟源。
+
+2. **设置分频值**
+
+设置寄存器 EPIT1_CR 寄存器的 PRESCALAR(bit15:4)位，设置分频值。
+
+3. **设置工作模式**
+
+设置寄存器 EPIT1_CR 的 RLD(bit3)位，设置 EPTI1 的工作模式。
+
+4. **设置定时器初始值来源**
+
+设置寄存器 EPIT1_CR 的 ENMOD(bit1)位，设置计数器的初始值来源。
+
+5. **使能比较中断**
+
+我们要使用到比较中断，因此需要设置寄存器 EPIT1_CR 的 OCIEN(bit2)位，使能比较中断。(IO中断使能)
+
+6. **设置加载值和比较值**
+
+设置寄存器 EPIT1_LR 中的加载值和寄存器 EPIT1_CMPR 中的比较值，通过这两个寄存器就可以决定定时器的中断周期
+
+7. **EPIT1 中断设置和中断服务函数编写**
+
+使能 GIC 中对应的 EPIT1 中断，注册中断服务函数，如果需要的话还可以设置中断优先级。最后编写中断服务函数。(GIC 中断ID使能)
+
+8. **使能EPIT1定时器**
+
+配置好 EPIT1 以后就可以使能 EPIT1 了，通过寄存器 EPIT1_CR 的 EN(bit0)位来设置。
+通过以上几步我们就配置好 EPIT 了，通过 EPIT 的比较中断来实现 LED0 的翻转。
+
+使用中断 基本操作：
+
+    1. 使能IO出中断开关
+    2. GIC初始化int_init() //自己不需要考虑
+    3. 使能GIC对应的中断ID开关
+    4. 注册中断函数
+    5. 设置优先级
+    6. 编写中断服务函数
+
+### 18.2 硬件原理分析
+①、LED0。
+②、定时器 EPTI1。
+硬件结构图见上文
+### 18.3 代码编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 10_epit_timer。
+
+本章实验在上一章例程的基础上完成，更改工程名字为“epit_timer”，然后在 bsp 文件夹下创建名为“epittimer”的文件夹，然后在 bsp/epittimer 中新建 bsp_epittimer.c 和 bsp_epittimer.h 这两个文件。
+
+```C
+1  #ifndef _BSP_EPITTIMER_H
+2  #define _BSP_EPITTIMER_H
+3  /***************************************************************
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5  文件名 : bsp_epittimer.h
+6  作者 : 左忠凯
+7  版本 : V1.0
+8  描述 : EPIT 定时器驱动头文件。
+9  其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/5 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14
+15 /* 函数声明 */
+16 void epit1_init(unsigned int frac, unsigned int value);
+17 void epit1_irqhandler(void);
+18
+19 #endif
+```
+
+```C
+1 #include "bsp_epittimer.h"
+2 #include "bsp_int.h"
+3 #include "bsp_led.h"
+4
+5 /*
+6  * @description : 初始化 EPIT 定时器.
+7  * EPIT 定时器是 32 位向下计数器,时钟源使用 ipg=66Mhz
+8  * @param – frac : 分频值，范围为 0~4095，分别对应 1~4096 分频。
+9  * @param - value : 倒计数值。
+10 * @return : 无
+11 */
+12 void epit1_init(unsigned int frac, unsigned int value)
+13 {
+14      if(frac > 0XFFF) //超过最大分频值设置为最大
+15          frac = 0XFFF;
+16      EPIT1->CR = 0; /* 先清零 CR 寄存器 */
+17
+18     /*
+19      * CR 寄存器:
+20      * bit25:24 01 时钟源选择 Peripheral clock=66MHz
+21      * bit15:4 frac 分频值
+22      * bit3: 1 当计数器到 0 的话从 LR 重新加载数值
+23      * bit2: 1 比较中断使能
+24      * bit1: 1 初始计数值来源于 LR 寄存器值
+25      * bit0: 0 先关闭 EPIT1
+26      */
+27      EPIT1->CR = (1<<24 | frac << 4 | 1<<3 | 1<<2 | 1<<1);
+28      EPIT1->LR = value; /* 加载寄存器值 */
+29      EPIT1->CMPR = 0; /* 比较寄存器值 */
+30
+31      /* 使能 GIC 中对应的中断 */
+32      GIC_EnableIRQ(EPIT1_IRQn);
+33
+34      /* 注册中断服务函数 */
+35      system_register_irqhandler(EPIT1_IRQn,(system_irq_handler_t)epit1_irqhandler,NULL);
+36      EPIT1->CR |= 1<<0; /* 使能 EPIT1 */
+37 }
+38
+39     /*
+40      * @description : EPIT 中断处理函数
+41      * @param : 无
+42      * @return : 无
+43      */
+44      void epit1_irqhandler(void)
+45      {
+46          static unsigned char state = 0;
+47          state = !state;
+48          if(EPIT1->SR & (1<<0)) /* 判断比较事件发生 */
+49          {
+50              led_switch(LED0, state); /* 定时器周期到，反转 LED */
+51          }
+52          EPIT1->SR |= 1<<0; /* 清除中断标志位 */
+53      }
+```
+
+epit1_irqhandler函数类型为 void (func) (void) 强转化为system_irq_handler_t类型。
+typedef void (*system_irq_handler_t) (unsigned int giccIar,void *param);
+
+实际调用到epit1_irqhandler时,由于强制的类型转化，会将其解释称system_irq_handler_t去执行，这个函数有两个参数，我们在注册函数时，会将这参数进行传入，到底层执行时会调用这个用的参数以及中断ID号，以防止报错！
+(进行函数指针的强制类型转化，一定要保证执行时参数类型正确且能正确传递)
+
+如下图：
+![alt](./images/Snipaste_2024-11-27_19-43-48.png)
+
+bsp_epittimer.c 里面有两个函数 epit1_init 和 epit1_irqhandler，分别是 EPIT1 初始化函数和EPIT1 中断处理函数。
+epit1_init 有两个参数 frac 和 value，其中 frac 是分频值，value 是加载值。
+在第 29 行设置比较寄存器为 0，也就是当计数器倒计数到 0 以后就会触发比较中断，因此分频值 frac 和 value 就可以决定中断频率，计算公式如下:
+
+$T_{out} = ((frac +1 )* value) / T_{clk}$
+
+frac值为0到4095 对应于1到4096的分频
+
+Tclk：EPIT1 的输入时钟频率(单位 Hz)。
+Tout：EPIT1 的溢出时间(单位 S)。
+ 
+第 38 行设置了 EPIT1 工作模式为 set-and-forget，并且时钟源为 ipg_clk=66MHz。
+假如我们现在要设置 EPIT1 中断周期为 500ms，可以设置分频值为 0，也就是 1 分频，这样进入 EPIT1的时钟就是 66MHz。
+如果要实现 500ms 的中断周期，EPIT1 的加载寄存器就应该为66000000/2=33000000。
+
+函数 epit1_irqhandler 是 EPIT1 的中断处理函数，此函数先读取 EPIT1_SR 寄存器，判断当前的中断是否为比较事件，如果是的话就翻转 LED 灯。
+最后在退出中断处理函数的时候需要清除中断标志位。
+
+最后编写main.c
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_epittimer.h"
+8 
+9 /*
+10 * @description : main 函数
+11 * @param : 无
+12 * @return : 无
+13 */
+14 int main(void)
+15 {
+16   int_init(); /* 初始化中断(一定要最先调用！) */
+17   imx6u_clkinit(); /* 初始化系统时钟 */
+18   clk_enable(); /* 使能所有的时钟 */
+19   led_init(); /* 初始化 led */
+20   beep_init(); /* 初始化 beep */
+21   key_init(); /* 初始化 key */
+22   epit1_init(0, 66000000/2); /* 初始化 EPIT1 定时器，1 分频
+23                               * 计数值为:66000000/2，也就是
+24                               * 定时周期为 500ms。
+25                               */
+26   while(1)
+27   {
+28     delay(500);
+29   }
+30
+31   return 0;
+32 }
+```
+
+main主程序十分简单
+
+### 18.4 编译下载
+
+#### 18.4.1 编写Makefile脚本
+
+加入epittimer即可
+
+lds保持不变
+
+#### 18.4.2 下载验证
+
+验证
