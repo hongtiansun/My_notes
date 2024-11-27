@@ -1002,10 +1002,10 @@ R0~R15 就是通用寄存器，通用寄存器可以分为以下三类：
 
 #### 2.备份寄存器 
 
-备份寄存器中的R8~R12这5个寄存器有两种物理寄存器。
-在快速中断模式下(FIQ)它们对应着Rx_irq(x=8~12)物理寄存器，其他模式下对应着 Rx(8~12)物理寄存器。
+备份寄存器中的R8\~R12这5个寄存器有两种物理寄存器。
+在快速中断模式下(FIQ)它们对应着Rx_irq(x=8\~12)物理寄存器，其他模式下对应着 Rx(8\~12)物理寄存器。
 FIQ 是快速中断模式，看名字就是知道这个中断模式要求快速执行！
-FIQ模式下中断处理程序可以使用R8~R12寄存器，因为FIQ模式下的R8~R12是独立的，因此中断处理程序可以不用执行保存和恢复中断现场的指令，从而加速中断的执行过程。
+FIQ模式下中断处理程序可以使用R8\~R12寄存器，因为FIQ模式下的R8\~R12是独立的，因此中断处理程序可以不用执行保存和恢复中断现场的指令，从而加速中断的执行过程。
 
 备份寄存器R13一共有8个物理寄存器，其中一个是用户模式(User)和系统模式(Sys)共用的，剩下的7个分别对应7种不同的模式。
 R13也叫做SP，用来做为栈指针。基本上每种模式都有一个自己的R13物理寄存器，应用程序会初始化R13，使其指向该模式专用的栈地址，这就是常说的初始化SP指针。
@@ -5375,4 +5375,1732 @@ Makefile和lds保持不变，可以将TARGET修改位clk
 
 进行测试即可，本试验的主频被配置成了528MHz，因此代码执行速度会变快，所以延时函
 数的运行就会加快，故而效果就是LED闪烁速度快一些 。
+ ***
+补充：pll1_main_clk 与pll1_sw_clk
 
+pll1_main_clk是PLL1的主要输出频率，其频率由外界晶振24HZ配以锁相环倍数倍频而得，通过修改CCM_ANALOG_PLL_ARMn寄存器可以修改
+
+在寄存器CCM_ANALOG_PLL_ARMn中重要的位如下：
+**ENABLE**: 时钟输出使能位，此位设置为1使能PLL1输出，如果设置为0的话就关闭PLL1输出。
+**DIV_SELECT**: 此七位设置PLL1的输出频率，可设置范围为：54~108。
+PLL1 CLK = Fin * div_seclec/2.0，Fin=24MHz。
+如果 PLL1 要输出 1056MHz的话，div_select就要设置为88。
+
+功能：pll1_main_clk 是通过 PLL1（第一阶段相位锁定环）生成的主时钟。
+它通常是 PLL1 输出的最直接时钟信号，并用于处理器的核心部分，或作为其他系统时钟源的基础。
+
+来源：pll1_main_clk 的输入源是外部时钟源（如晶振）经过PLL1调节后产生的时钟。
+PLL1根据配置的倍频因子生成该时钟，提供一个高频稳定的时钟信号。
+
+用途：这个时钟一般用于CPU核心时钟（ARM Cortex-A7核）或系统总线，确保系统的高效运行。
+ ***
+pll1_sw_clk时钟
+
+功能：pll1_sw_clk 是 PLL1 输出的另一时钟信号，通常作为软件可控制的时钟输出，允许通过时钟控制寄存器来进行切换、启用或禁用。
+这种时钟常用于处理器的外围模块或外部接口设备。
+
+来源：pll1_sw_clk 也是由 PLL1 产生，但它是经过某些额外的时钟分配单元、选择器或开关控制之后输出的。
+可以通过软件配置选择是否启用该时钟，或者选择PLL1的不同输出之一。
+
+用途：它通常供给非核心的模块或外设，比如外部总线、通信接口（如UART、SPI等），以及其他子模块，提供灵活的时钟源。
+
+总结：
+pll1_main_clk 是 PLL1 的主要输出时钟，直接连接到处理器的核心部分（如CPU或系统总线）。
+pll1_sw_clk 是由 PLL1 生成的另一时钟输出，但它通常与时钟选择器或软件控制相关，用于非核心模块或外设，提供更灵活的时钟配置。
+修改PLL1时钟时，需要先修改PLL1输出为pll1_sw_clk，然后去修改pll1_main_clk.
+修改完main后，令pll1_sw_clk 等于 pll1_main_clk 
+一般情形下，此两个时钟线始终相等。
+pll1_sw_clk的一个很重要的应用就是单片机的低功耗模式。
+
+## 第十七章 GPIO中断实验
+
+中断系统是一个处理器重要的组成部分，中断系统极大的提高了CPU的执行效率，在学习STM32 的时候就经常用到中断。
+本章就通过与 STM32 的对比来学习一下 Cortex-A7(I.MX6U)中断系统和Cortex-M(STM32)中断系统的异同，同时，本章会将I.MX6U的一个IO作为输入中断，借此来讲解如何对I.MX6U的中断系统进行编程。 
+
+### 17.1 Cortex-A7中断系统详解
+
+#### 17.1.1 STM32中断系统回顾
+
+STM32的中断系统主要有以下几个关键点： 
+ ①、中断向量表。 
+ ②、NVIC(内嵌向量中断控制器)。 
+ ③、中断使能。 
+ ④、中断服务函数。
+
+ ***
+**中断向量表**
+
+中断向量表是一个表，这个表里面存放的是中断向量。
+中断服务程序的入口地址或存放中断服务程序的首地址成为中断向量，因此中断向量表是一系列中断服务程序入口地址组成的表。
+这些中断服务程序(函数)在中断向量表中的位置是由半导体厂商定好的，当某个中断被触发以后就会自动跳转到中断向量表中对应的中断服务程序(函数)入口地址处。
+
+中断向量表在整个程序的最前面，比如STM32F103的中断向量表如下所示：
+![alt](./images/Snipaste_2024-11-26_12-49-25.png)
+![alt](./images/Snipaste_2024-11-26_12-49-44.png)
+<span style="color:red"><b>(汇编代码)</b></span>
+如图就是STM32F103的中断向量表，中断向量表都是链接到代码的最前面，比如一般ARM处理器都是从地址0X00000000开始执行指令的，那么中断向量表就是从0X00000000开始存放的。
+
+图中第1行的“__initial_sp”就是第一条中断向量，存放的是栈顶指针，接下来是第2行复位中断复位函数Reset_Handler的入口地址，依次类推，直到第27行的最后一个中断服务函数DMA2_Channel4_5_IRQHandler的入口地址，这样STM32F103的中断向量表就建好了。
+
+我们说ARM处理器都是从地址0X00000000开始运行的，但是我们学习STM32的时候代码是下载到0X8000000开始的存储区域中。
+因此中断向量表是存放到0X8000000地址处的，而不是0X00000000，这样不是就出错了吗？
+为了解决这个问题，Cortex-M架构引入了一个新的概念——中断向量表偏移，通过中断向量表偏移就可以将中断向量表存放到任意地址处，中断向量表偏移配置在函数SystemInit中完成，通过向SCB_VTOR寄存器写入新的中断向量表首地址即可：
+
+```C
+1  void SystemInit (void) 
+2  { 
+3    RCC->CR |= (uint32_t)0x00000001; 
+4   
+5    /* 省略其它代码 */ 
+6   
+7  #ifdef VECT_TAB_SRAM 
+8    SCB->VTOR = SRAM_BASE | VECT_TAB_OFFSET;  
+9  #else 
+10   SCB->VTOR = FLASH_BASE | VECT_TAB_OFFSET;  
+11 #endif  
+12 } 
+```
+第8行和第10行就是设置中断向量表偏移，第8行是将中断向量表设置到RAM中。
+第10行是将中断向量表设置到ROM中，基本都是将中断向量表设置到ROM中，也就是地址0X08000000处
+
+第10行用到了FALSH_BASE和VECT_TAB_OFFSET，这两个都是宏，定义如下所示：
+```C
+#define FLASH_BASE       ((uint32_t)0x08000000) 
+#define VECT_TAB_OFFSET   0x0 
+```
+因此第10行的代码就是：SCB->VTOR=0X080000000，中断向量表偏移设置完成。
+通过上面的讲解我们了解了两个跟STM32中断有关的概念：中断向量表和中断向量表偏移，那么这个跟I.MX6U有什么关系呢？
+因为I.MX6U所使用的Cortex-A7内核也有中断向量表和中断向量表偏移，而且其含义和STM32是一模一样的！只是用到的寄存器不同而已，概念完全相同！
+
+附件 STM32存储器映像：
+![alt](./images/A微信图片_20241126130430.jpg)
+
+ ***
+**NVIC内嵌向量中断控制器**
+
+中断系统得有个管理机构，对于STM32这种Cortex-M内核的单片机来说这个管理机构叫做NVIC，全称叫做Nested Vectored Interrupt Controller。
+关于NVIC本教程不作详细的讲解，既然Cortex-M内核有个中断系统的管理机构—NVIC，那么I.MX6U所使用的Cortex-A7内核是不是也有个中断系统管理机构？
+答案是肯定的，不过Cortex-A内核的中断管理机构不叫做NVIC，而是叫做GIC，全称是general interrupt controller，后面我们会详细的讲解Cortex-A内核的GIC。
+
+ ***
+**中断使能**
+
+要使用某个外设的中断，肯定要先使能这个外设的中断，以 STM32F103的 PE2这个 IO为例。
+假如我们要使用PE2的输入中断肯定要使用如下代码来使能对应的中断：
+
+```C
+NVIC_InitStructure.NVIC_IRQChannel = EXTI2_IRQn; 
+NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0x02; //抢占优先级 2
+NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0x02; //子优先级 2  
+NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE; //使能外部中断通道
+NVIC_Init(&NVIC_InitStructure);
+```
+上述代码就是使能 PE2对应 的 EXTI2中断，同理，如果要使用 I.MX6U的某个中断的话也需要使能其对应的中断。
+
+ ***
+**中断服务函数**
+
+我们使用中断的目的就是为了使用中断服务函数，当中断发生以后中断服务函数就会被调用，我们要处理的工作就可以放到中断服务函数中去完成。
+同样以 STM32F103的 PE2为例，
+其中断服务函数如下所示：
+```C
+/* 外部中断 2服务程序 */ 
+void EXTI2_IRQHandler(void) 
+{ 
+  /* 中断处理代码 */ 
+}
+```
+当 PE2引脚的中断触发以后就会调用其对应的中断处理函数 EXTI2_IRQHandler，我们可以在函数 EXTI2_IRQHandler中添加中断处理代码。
+同理， I.MX6U也有中断服务函数，当某个外设中断发生以后就会调用其对应的中断服务函数。
+
+通过对 STM32中断系统的回顾，我们知道了 Cortex-M内核的中断处理过程，那么 Cortex-A内核的中断处理过程是否是一样的，有什么异同呢？
+接下来我们带着这样的疑问来学习Cortex-A7内核的中断系统。
+
+#### 17.1.2 Cortex-A7中断系统
+
+跟 STM32一样， Cortex-A7也有中断向量表，中断向量表也是在代码的最前面。
+Cortex-A7内核有 8个异常中断，这 8个异常中断的中断向量表如表所示：
+
+| 向量地址 | 中断类型                              | 中断模式                  |
+| -------- | ------------------------------------- | ------------------------- |
+| 0X00     | 复位中断(Rest)                        | 特权模式(SVC)             |
+| 0X04     | 未定义指令中断(Undefined Instruction) | 未定义指令中止模式(Undef) |
+| 0X08     | 软中断(Software Interrupt,SWI)        | 特权模式(SVC)             |
+| 0X0C     | 指令预取中止中断(Prefetch Abort)      | 中止模式                  |
+| 0X10     | 数据访问中止中断(Data Abort)          | 中止模式                  |
+| 0X14     | 未使用(Not Used)                      | 未使用                    |
+| 0X18     | IRQ中断 (IRQ Interrupt)               | 外部中断模式(IRQ)         |
+| 0X1C     | FIQ中断 (FIQ Interrupt)               | 快速中断模式(FIQ)         |
+
+中断向量表里面都是中断服务函数的入口地址，因此一款芯片有什么中断都是可以从中断向量表看出来的。
+从表中可以看出， Cortex-A7一共有 8个中断，而且还有一个中断向量未使用，实际只有7 个中断。
+
+和上文中的STM32F103 中断向量表比起来少了很多！难道一个能跑Linux 的芯片只有这7 个中断？明显不可能的！
+那类似STM32 中的EXTI9_5_IRQHandler、TIM2_IRQHandler 这样的中断向量在哪里？I2C、SPI、定时器等等的中断怎么处理呢？
+这个就是Cortex-A 和Cotex-M 在中断向量表这一块的区别。
+对于Cortex-M 内核来说，中断向量表列举出了一款芯片所有的中断向量，包括芯片外设的所有中断。对于Cotex-A 内核来说并没有这么做，在表中有个IRQ 中断， Cortex-A 内核CPU 的所有外部中断都属于这个IRQ 中断，当任意一个外部中断发生的时候都会触发IRQ 中断。
+在IRQ 中断服务函数里面就可以读取指定的寄存器来判断发生的具体是什么中断，进而根据具体的中断做出相应的处理。
+这些外部中断和IRQ 中断的关系如图所示：
+
+![alt](./images/Snipaste_2024-11-26_13-36-09.png)
+
+左侧的Software0_IRQn~PMU_IRQ2_IRQ 这些都是I.MX6U 的中断，他们都属于IRQ 中断。
+当图左侧这些中断中任意一个发生的时候IRQ 中断都会被触发，所以我们需要在IRQ 中断服务函数中判断究竟是左侧的哪个中断发生了，然后再做出具体的处理。
+
+接下来我们简要介绍下IMX6uLL的这七个中断：
+
+①、复位中断(Rest)，CPU 复位以后就会进入复位中断，我们可以在复位中断服务函数里面做一些初始化工作，比如初始化SP 指针、DDR 等等。
+
+②、未定义指令中断(Undefined Instruction)，如果指令不能识别的话就会产生此中断。
+
+③、软中断(Software Interrupt,SWI)，由SWI 指令引起的中断，Linux 的系统调用会用SWI指令来引起软中断，**通过软中断来陷入到内核空间**。
+
+④、指令预取中止中断(Prefetch Abort)，预取指令的出错的时候会产生此中断。
+
+⑤、数据访问中止中断(Data Abort)，访问数据出错的时候会产生此中断。
+
+⑥、IRQ 中断(IRQ Interrupt)，外部中断，前面已经说了，芯片内部的外设中断都会引起此中断的发生。
+
+⑦、FIQ 中断(FIQ Interrupt)，快速中断，如果需要快速处理中断的话就可以使用此中断。
+
+上面的7 个中断中，我们常用的就是复位中断和IRQ 中断，所以我们需要编写这两个中断的中断服务函数，稍后我们会讲解如何编写对应的中断服务函数。
+
+首先我们要根据表的内容来创建中断向量表，中断向量表处于程序最开始的地方，比如我们前面例程的start.S 文件最前面，中断向量表如下：
+
+```S
+1 .global _start /* 全局标号 */
+2
+3 _start:/*中断向量表*/
+4   ldr pc, =Reset_Handler /* 复位中断 */
+5   ldr pc, =Undefined_Handler /* 未定义指令中断 */
+6   ldr pc, =SVC_Handler /* SVC(Supervisor)中断 */
+7   ldr pc, =PrefAbort_Handler /* 预取终止中断 */
+8   ldr pc, =DataAbort_Handler /* 数据终止中断 */
+9   ldr pc, =NotUsed_Handler /* 未使用中断 */
+10  ldr pc, =IRQ_Handler /* IRQ 中断 */
+11  ldr pc, =FIQ_Handler /* FIQ(快速中断)未定义中断 */
+12  /* 中断服务函数*/
+13 /* 复位中断 */
+14 Reset_Handler:
+15  /* 复位中断具体处理过程 */
+16
+17 /* 未定义中断 */
+18 Undefined_Handler:
+19  ldr r0, =Undefined_Handler
+20  bx r0
+21
+22 /* SVC 中断 */
+23 SVC_Handler:
+24  ldr r0, =SVC_Handler
+25  bx r0
+26
+27 /* 预取终止中断 */
+28 PrefAbort_Handler:
+29  ldr r0, =PrefAbort_Handler
+30  bx r0
+31
+32 /* 数据终止中断 */
+33 DataAbort_Handler:
+34  ldr r0, =DataAbort_Handler
+35  bx r0
+36
+37 /* 未使用的中断 */
+38 NotUsed_Handler:
+39
+40  ldr r0, =NotUsed_Handler
+41  bx r0
+42
+43 /* IRQ 中断！重点！！！！！ */
+44 IRQ_Handler:
+45  /* 复位中断具体处理过程 */
+46 
+47 /* FIQ 中断 */
+48 FIQ_Handler:
+49  ldr r0, =FIQ_Handler
+50  bx r0 
+```
+
+第 4 到 11 行是中断向量表，当指定的中断发生以后就会调用对应的中断复位函数，比如复位中断发生以后就会执行第 4 行代码，也就是调用函数 Reset_Handler，函数 Reset_Handler就是复位中断的中断复位函数，其它的中断同理。
+
+第 14 到 50 行就是对应的中断服务函数，**中断服务函数都是用汇编编写的**，我们实际需要编写的只有复位中断服务函数 Reset_Handler 和 IRQ 中断服务函数 IRQ_Handler，其它的中断本教程没有用到，所以都是死循环。
+在编写复位中断复位函数和 IRQ 中断服务函数之前我们还需要了解一些其它的知识，否则的话就没法编写。
+
+#### 17.1.3 GIC控制器
+
+1. **GIC控制器总览**
+
+STM32(Cortex-M)的中断控制器叫做 NVIC，I.MX6U(Cortex-A)的中断控制器叫做 GIC，关于 GIC 的详细内容请参考开发板光盘中的文档《ARM Generic Interrupt Controller(ARM GIC控制器)V2.0.pdf》。
+
+GIC 是 ARM 公司给 Cortex-A/R 内核提供的一个中断控制器，类似 Cortex-M 内核中的NVIC。
+目前 GIC 有 4 个版本:V1~V4，V1 是最老的版本，已经被废弃了。
+V2~V4 目前正在大量的使用。
+GIC V2 是给 ARMv7-A 架构使用的，比如 Cortex-A7、Cortex-A9、Cortex-A15 等，V3 和 V4 是给 ARMv8-A/R 架构使用的，也就是 64 位芯片使用的。
+I.MX6U 是 Cortex-A 内核的，因此我们主要讲解 GIC V2。
+GIC V2 最多支持 8 个核。ARM 会根据 GIC 版本的不同研发出不同的 IP 核，那些半导体厂商直接购买对应的 IP 核即可，比如 ARM 针对 GIC V2 就开发出了 GIC400 这个中断控制器 IP 核。（Intellectual Property Core 硬件模块）
+当 GIC 接收到外部中断信号以后就会报给 ARM 内核，但是ARM 内核只提供了四个信号给 GIC 来汇报中断情况：VFIQ、VIRQ、FIQ 和 IRQ，
+他们之间的关系如图所示：
+![alt](./images/Snipaste_2024-11-26_14-33-30.png)
+
+在图中，GIC 接收众多的外部中断，然后对其进行处理，最终就只通过四个信号报给 ARM 内核，这四个信号的含义如下：
+- VFIQ:虚拟快速 FIQ。
+- VIRQ:虚拟外部 IRQ。
+- FIQ:快速中断 IRQ。
+- IRQ:外部中断 IRQ。
+
+VFIQ 和 VIRQ 是针对虚拟化的，我们不讨论虚拟化，剩下的就是 FIQ 和 IRQ 了，我们前面都讲了很多次了。
+本教程我们只使用 IRQ，所以相当于 GIC 最终向 ARM 内核就上报一个 IRQ信号。
+那么 GIC 是如何完成这个工作的呢？
+
+GICV2逻辑图如下：
+
+![alt](./images/Snipaste_2024-11-26_14-38-25.png)
+
+图中左侧部分就是中断源，中间部分就是 GIC 控制器，最右侧就是中断控制器向处理器内核发送中断信息。
+我们重点要看的肯定是中间的 GIC 部分，GIC 将众多的中断源分为分为三类：
+
+①、SPI(Shared Peripheral Interrupt),共享中断，顾名思义，所有 Core 共享的中断，这个是最常见的，那些外部中断都属于 SPI 中断(注意！不是 SPI 总线那个中断) 。
+比如按键中断、串口中断等等，这些中断所有的 Core 都可以处理，不限定特定 Core。
+
+②、PPI(Private Peripheral Interrupt)，私有中断，我们说了 GIC 是支持多核的，每个核肯定有自己独有的中断。
+这些独有的中断肯定是要指定的核心处理，因此这些中断就叫做私有中断。
+
+③、SGI(Software-generated Interrupt)，软件中断，由软件触发引起的中断，通过向寄存器GICD_SGIR 写入数据来触发，系统会使用 SGI 中断来完成多核之间的通信。
+
+2. **中断ID**
+
+中断源有很多，为了区分这些不同的中断源肯定要给他们分配一个唯一 ID，这些 ID 就是中断 ID。
+每一个 CPU 最多支持 1020 个中断 ID，中断 ID 号为 ID0~ID1019。
+这 1020 个 ID 包含了 PPI、SPI 和 SGI，那么这三类中断是如何分配这 1020 个中断 ID 的呢？
+分配如下：
+- ID0~ID15：这 16 个 ID 分配给 SGI。
+- ID16~ID31：这 16 个 ID 分配给 PPI。
+- ID32~ID1019：这 988 个 ID 分配给 SPI
+
+像 GPIO 中断、串口中断等这些外部中断 ，至于具体到某个 ID 对应哪个中断那就由半导体厂商根据实际情况去定义了。
+比如 I.MX6U 的总共使用了 128 个中断 ID，加上前面属于 PPI 和 SGI 的 32 个 ID，I.MX6U 的中断源共有 128+32=160个，这 128 个中断 ID 对应的中断在《I.MX6ULL 参考手册》的“3.2 CortexA7 interrupts”小节，
+
+![alt](./images/Snipaste_2024-11-26_14-44-46.png)
+
+完整的中断源自行查阅《I.MX6ULL 参考手册》的 3.2 小节。
+打开裸机例程“9_int”，我们前面移植了 NXP 官方 SDK中的文件 MCIMX6Y2C.h，在此文件中定义了一个枚举类型 IRQn_Type，此枚举类型就枚举出了 I.MX6U 的所有中断，代码如下所示:
+
+```C
+1 #define NUMBER_OF_INT_VECTORS 160 /* 中断源 160 个，SGI+PPI+SPI*/
+2
+3 typedef enum IRQn {
+4 /* Auxiliary constants */
+5 NotAvail_IRQn = -128,
+6
+7 /* Core interrupts */
+8 Software0_IRQn = 0,
+9 Software1_IRQn = 1,
+10 Software2_IRQn = 2,
+11 Software3_IRQn = 3,
+12 Software4_IRQn = 4,
+13 Software5_IRQn = 5,
+14 Software6_IRQn = 6,
+15 Software7_IRQn = 7,
+16 Software8_IRQn = 8,
+17 Software9_IRQn = 9,
+18 Software10_IRQn = 10,
+19 Software11_IRQn = 11,
+20 Software12_IRQn = 12, 
+21 Software13_IRQn = 13,
+22 Software14_IRQn = 14,
+23 Software15_IRQn = 15,
+24 VirtualMaintenance_IRQn = 25,
+25 HypervisorTimer_IRQn = 26,
+26 VirtualTimer_IRQn = 27,
+27 LegacyFastInt_IRQn = 28,
+28 SecurePhyTimer_IRQn = 29,
+29 NonSecurePhyTimer_IRQn = 30,
+30 LegacyIRQ_IRQn = 31,
+31
+32 /* Device specific interrupts */
+33 IOMUXC_IRQn = 32,
+34 DAP_IRQn = 33,
+35 SDMA_IRQn = 34,
+36 TSC_IRQn = 35,
+37 SNVS_IRQn = 36,
+…… ...... ......
+151 ENET2_1588_IRQn = 153,
+152 Reserved154_IRQn = 154,
+153 Reserved155_IRQn = 155,
+154 Reserved156_IRQn = 156,
+155 Reserved157_IRQn = 157,
+156 Reserved158_IRQn = 158,
+157 PMU_IRQ2_IRQn = 159
+158} IRQn_Type;
+```
+
+3. **GIC逻辑分块**
+
+GIC 架构分为了两个逻辑块：Distributor 和 CPU Interface，也就是分发器端和 CPU 接口端。这两个逻辑块的含义如下：
+
+![alt](./images/Snipaste_2024-11-26_14-52-16.png)
+
+**Distributor(分发器端)**：从图可以看出，此逻辑块负责处理各个中断事件的分发问题，也就是中断事件应该发送到哪个 CPU Interface 上去。
+分发器收集所有的中断源，可以控制每个中断的优先级，它总是将优先级最高的中断事件发送到 CPU 接口端。
+分发器端要做的主要工作如下：
+①、全局中断使能控制。
+②、控制每一个中断的使能或者关闭。
+③、设置每个中断的优先级。
+④、设置每个中断的目标处理器列表。
+⑤、设置每个外部中断的触发模式：电平触发或边沿触发。
+⑥、设置每个中断属于组 0 还是组 1。
+
+**CPU Interface(CPU 接口端)**：CPU 接口端听名字就知道是和 CPU Core 相连接的，因此在图中每个 CPU Core 都可以在 GIC 中找到一个与之对应的 CPU Interface。
+CPU 接口端就是分发器和 CPU Core 之间的桥梁，CPU 接口端主要工作如下：
+①、使能或者关闭发送到 CPU Core 的中断请求信号。
+②、应答中断。
+③、通知中断处理完成。
+④、设置优先级掩码，通过掩码来设置哪些中断不需要上报给 CPU Core。
+⑤、定义抢占策略。
+⑥、当多个中断到来的时候，选择优先级最高的中断通知给 CPU Core。
+
+例程“9_int”中的文件 core_ca7.h 定义了 GIC 结构体，此结构体里面的寄存器分为了分发器端和 CPU 接口端，寄存器定义如下所示：
+
+```C
+/*
+* GIC 寄存器描述结构体，
+* GIC 分为分发器端和 CPU 接口端
+*/
+1 typedef struct
+2 {
+3 /* 分发器端寄存器 */
+4 uint32_t RESERVED0[1024];
+5 __IOM uint32_t D_CTLR; /* Offset: 0x1000 (R/W) */
+6 __IM uint32_t D_TYPER; /* Offset: 0x1004 (R/ ) */
+7 __IM uint32_t D_IIDR; /* Offset: 0x1008 (R/ ) */
+8 uint32_t RESERVED1[29];
+9 __IOM uint32_t D_IGROUPR[16]; /* Offset: 0x1080 - 0x0BC (R/W) */
+10 uint32_t RESERVED2[16];
+11 __IOM uint32_t D_ISENABLER[16];/* Offset: 0x1100 - 0x13C (R/W) */
+12 uint32_t RESERVED3[16];
+13 __IOM uint32_t D_ICENABLER[16];/* Offset: 0x1180 - 0x1BC (R/W) */
+14 uint32_t RESERVED4[16];
+15 __IOM uint32_t D_ISPENDR[16]; /* Offset: 0x1200 - 0x23C (R/W) */
+16 uint32_t RESERVED5[16];
+17 __IOM uint32_t D_ICPENDR[16]; /* Offset: 0x1280 - 0x2BC (R/W) */
+18 uint32_t RESERVED6[16];
+19 __IOM uint32_t D_ISACTIVER[16];/* Offset: 0x1300 - 0x33C (R/W) */
+20 uint32_t RESERVED7[16];
+21 __IOM uint32_t D_ICACTIVER[16];/* Offset: 0x1380 - 0x3BC (R/W) */
+22 uint32_t RESERVED8[16];
+23 __IOM uint8_t D_IPRIORITYR[512];/* Offset: 0x1400 - 0x5FC (R/W) */
+24 uint32_t RESERVED9[128];
+25 __IOM uint8_t D_ITARGETSR[512];/* Offset: 0x1800 - 0x9FC (R/W) */
+26 uint32_t RESERVED10[128];
+27 __IOM uint32_t D_ICFGR[32]; /* Offset: 0x1C00 - 0xC7C (R/W) */
+28 uint32_t RESERVED11[32];
+29 __IM uint32_t D_PPISR; /* Offset: 0x1D00 (R/ ) */
+30 __IM uint32_t D_SPISR[15]; /* Offset: 0x1D04 - 0xD3C (R/ ) */
+31 uint32_t RESERVED12[112];
+32 __OM uint32_t D_SGIR; /* Offset: 0x1F00 ( /W) */
+33 uint32_t RESERVED13[3];
+34 __IOM uint8_t D_CPENDSGIR[16];/* Offset: 0x1F10 - 0xF1C (R/W) */
+35 __IOM uint8_t D_SPENDSGIR[16];/* Offset: 0x1F20 - 0xF2C (R/W) */
+36 uint32_t RESERVED14[40];
+37 __IM uint32_t D_PIDR4; /* Offset: 0x1FD0 (R/ ) */
+38 __IM uint32_t D_PIDR5; /* Offset: 0x1FD4 (R/ ) */
+39 __IM uint32_t D_PIDR6; /* Offset: 0x1FD8 (R/ ) */
+40 __IM uint32_t D_PIDR7; /* Offset: 0x1FDC (R/ ) */
+41 __IM uint32_t D_PIDR0; /* Offset: 0x1FE0 (R/ ) */
+42 __IM uint32_t D_PIDR1; /* Offset: 0x1FE4 (R/ ) */
+43 __IM uint32_t D_PIDR2; /* Offset: 0x1FE8 (R/ ) */
+44 __IM uint32_t D_PIDR3; /* Offset: 0x1FEC (R/ ) */
+45 __IM uint32_t D_CIDR0; /* Offset: 0x1FF0 (R/ ) */
+46 __IM uint32_t D_CIDR1; /* Offset: 0x1FF4 (R/ ) */
+47 __IM uint32_t D_CIDR2; /* Offset: 0x1FF8 (R/ ) */
+48 __IM uint32_t D_CIDR3; /* Offset: 0x1FFC (R/ ) */
+49
+50 /* CPU 接口端寄存器 */
+51 __IOM uint32_t C_CTLR; /* Offset: 0x2000 (R/W) */
+52 __IOM uint32_t C_PMR; /* Offset: 0x2004 (R/W) */
+53 __IOM uint32_t C_BPR; /* Offset: 0x2008 (R/W) */
+54 __IM uint32_t C_IAR; /* Offset: 0x200C (R/ ) */
+55 __OM uint32_t C_EOIR; /* Offset: 0x2010 ( /W) */
+56 __IM uint32_t C_RPR; /* Offset: 0x2014 (R/ ) */
+57 __IM uint32_t C_HPPIR; /* Offset: 0x2018 (R/ ) */
+58 __IOM uint32_t C_ABPR; /* Offset: 0x201C (R/W) */
+59 __IM uint32_t C_AIAR; /* Offset: 0x2020 (R/ ) */
+60 __OM uint32_t C_AEOIR; /* Offset: 0x2024 ( /W) */
+61 __IM uint32_t C_AHPPIR; /* Offset: 0x2028 (R/ ) */
+62 uint32_t RESERVED15[41];
+63 __IOM uint32_t C_APR0; /* Offset: 0x20D0 (R/W) */
+64 uint32_t RESERVED16[3];
+65 __IOM uint32_t C_NSAPR0; /* Offset: 0x20E0 (R/W) */
+66 uint32_t RESERVED17[6];
+67 __IM uint32_t C_IIDR; /* Offset: 0x20FC (R/ ) */
+68 uint32_t RESERVED18[960];
+69 __OM uint32_t C_DIR; /* Offset: 0x3000 ( /W) */
+70 } GIC_Type;
+```
+
+示例代码中的结构体 GIC_Type 就是 GIC 控制器，列举出了 GIC 控制器的所有寄存器，可以通过结构体 GIC_Type 来访问 GIC 的所有寄存器。
+
+第 5 行是 GIC 的分发器端相关寄存器，其相对于 GIC 基地址偏移为 0X1000，因此我们获取到 GIC 基地址以后只需要加上 0X1000 即可访问 GIC 分发器端寄存器。
+
+第 51 行是 GIC 的 CPU 接口端相关寄存器，其相对于 GIC 基地址的偏移为 0X2000，同样的，获取到 GIC 基地址以后只需要加上 0X2000 即可访问 GIC 的 CPU 接口段寄存器。
+
+那么问题来了？GIC 控制器的寄存器基地址在哪里呢？
+这个就需要用到 Cortex-A 的 CP15 协处理器了.
+
+#### 17.1.4 CP15协处理器
+
+简介：
+
+```markdown
+CP15协处理器是ARM架构中的一个重要组件，主要负责系统控制和配置。
+以下是CP15协处理器的一些关键功能和特点：
+
+### CP15协处理器的功能
+1. **系统控制寄存器**：
+   - 包含系统级控制寄存器，用于控制和配置处理器行为，例如启用或禁用缓存、MMU（内存管理单元）、异常处理等。
+2. **缓存控制**：
+   - 控制一级和二级缓存的启用、禁用和刷新操作，管理缓存一致性和性能优化。
+3. **内存管理单元（MMU）**：
+   - 配置和管理虚拟内存地址到物理地址的映射，支持内存保护和分页机制。
+4. **异常向量表配置**：
+   - 配置和管理异常向量表，定义异常处理程序的入口地址。
+5. **性能监控**：
+   - 提供性能监控寄存器，用于收集和分析处理器的性能数据，例如指令计数、缓存命中率等。
+6. **安全扩展**：
+   - 支持ARM TrustZone技术，实现安全和非安全模式的切换和管理。
+
+### CP15协处理器的工作原理
+当处理器需要进行系统级配置或控制操作时，会通过特定的指令访问CP15协处理器。例如，以下ARM汇编代码展示了如何访问CP15的系统控制寄存器：
+
+`MRC p15, 0, r0, c1, c0, 0   ; 读取CP15的系统控制寄存器到r0`
+`ORR r0, r0, #1              ; 设置第0位以启用MMU`
+`MCR p15, 0, r0, c1, c0, 0   ; 将修改后的值写回系统控制寄存器`
+
+### 应用场景
+CP15协处理器广泛应用于需要精细控制和优化的嵌入式系统中，例如：
+- 操作系统内核的内存管理和任务调度。
+- 高性能计算中的缓存和性能优化。
+- 安全性要求高的应用场景，如金融和医疗设备。
+
+通过CP15协处理器，开发者可以灵活地配置和控制处理器的行为，以满足不同应用场景的需求。如果你有更多关于CP15协处理器或ARM架构的具体问题，请随时告诉我！ 😊
+```
+
+关于 CP15 协处理器和其相关寄存器的详细内容，请参考下面两份文档：《ARM ArchitectureReference Manual ARMv7-A and ARMv7-R edition.pdf》第 1469 页“B3.17 Oranization of the CP15 registers in a VMSA implementation”。《Cortex-A7 Technical ReferenceManua.pdf》第55页“Capter 4 System Control”。
+
+CP15 协处理器一般用于存储系统管理，但是在中断中也会使用到。
+CP15 协处理器一共有16个32位寄存器。
+CP15 协处理器的访问通过如下另个指令完成：
+
+MRC: 将 CP15 协处理器中的寄存器数据读到 ARM 寄存器中。
+MCR: 将 ARM 寄存器的数据写入到 CP15 协处理器寄存器中。
+MRC 就是读 CP15 寄存器，MCR 就是写 CP15 寄存器，MCR 指令格式如下：
+`MCR{cond} p15, <opc1>, <Rt>, <CRn>, <CRm>, <opc2>`
+
+- cond:指令执行的条件码，如果忽略的话就表示无条件执行。
+- opc1：协处理器要执行的操作码。
+- Rt：ARM 源寄存器，要写入到 CP15 寄存器的数据就保存在此寄存器中。
+- CRn：CP15 协处理器的目标寄存器。
+- CRm：协处理器中附加的目标寄存器或者源操作数寄存器，如果不需要附加信息就将CRm 设置为 C0，否则结果不可预测。
+- opc2：可选的协处理器特定操作码，当不需要的时候要设置为 0。
+
+MRC 的指令格式和 MCR 一样，只不过在 MRC 指令中 Rt 就是目标寄存器，也就是从CP15 指定寄存器读出来的数据会保存在 Rt 中。
+而 CRn 就是源寄存器，也就是要读取的写处理器寄存器。
+`MCR{cond} p15, <opc1>, <Rt>, <CRn>, <CRm>, <opc2>`
+
+假如我们要将 CP15 中 C0 寄存器的值读取到 R0 寄存器中，那么就可以使用如下命令：
+`MRC p15, 0, r0, c0, c0, 0`
+
+CP15 协处理器有 16 个 32 位寄存器，c0~c15，本章来看一下 c0、c1、c12 和 c15 这四个寄存器，因为我们本章实验要用到这四个寄存器，其他的寄存器大家参考上面的两个文档即可。
+
+1. **C0寄存器**
+
+CP15 协处理器有 16 个 32 位寄存器，c0~c15，在使用 MRC 或者 MCR 指令访问这 16 个寄存器的时候，指令中的 CRn、opc1、CRm 和 opc2 通过不同的搭配，其得到的寄存器含义是不同的。
+比如 c0 在不同的搭配情况下含义如图：
+![alt](./images/Snipaste_2024-11-26_15-15-39.png)
+
+在图中当 MRC/MCR 指令中的 CRn=c0，opc1=0，CRm=c0，opc2=0 的时候就表示此时的 c0 就是 MIDR 寄存器，也就是主 ID 寄存器，这个也是 c0 的基本作用。
+对于 Cortex-A7内核来说，c0 作为 MDIR 寄存器的时候其含义如图所示：
+
+![alt](./images/Snipaste_2024-11-26_15-20-56.png)
+
+在图中各位所代表的含义如下:
+
+- bit31:24：厂商编号，0X41，ARM。
+- bit23:20：内核架构的主版本号，ARM 内核版本一般使用 rnpn 来表示，比如 r0p1，其中 r0后面的 0 就是内核架构主版本号。
+- bit19:16：架构代码，0XF，ARMv7 架构。
+- bit15:4：内核版本号，0XC07，Cortex-A7 MPCore 内核。
+- bit3:0：内核架构的次版本号，rnpn 中的 pn，比如 r0p1 中 p1 后面的 1 就是次版本号。
+
+2. **c1寄存器**
+
+c1 寄存器同样通过不同的配置，其代表的含义也不同
+
+![alt](./images/Snipaste_2024-11-26_15-24-11.png)
+
+在图中当 MRC/MCR 指令中的 CRn=c1，opc1=0，CRm=c0，opc2=0 的时候就表示此时的 c1 就是 SCTLR 寄存器，也就是系统控制寄存器，这个是 c1 的基本作用。
+
+SCTLR 寄存器主要是完成控制功能的，比如使能或者禁止 MMU、I/D Cache 等，c1 作为 SCTLR 寄存器的时候其含义如图所示：
+
+![alt](./images/Snipaste_2024-11-26_15-25-33.png)
+
+SCTLR 的位比较多，我们就只看本章会用到的几个位：
+
+- bit13：V , 中断向量表基地址选择位，为 0 的话中断向量表基地址0X00000000，软件可以使用 VBAR 来重映射此基地址，也就是中断向量表重定位。
+为 1 的话中断向量表基地址为0XFFFF0000，此基地址不能被重映射。
+- bit12：I，I Cache 使能位，为 0 的话关闭 I Cache，为 1 的话使能 I Cache。
+- bit11：Z，分支预测使能位，如果开启 MMU 的话，此位也会使能。
+- bit10：SW，SWP 和 SWPB 使能位，当为 0 的话关闭 SWP 和 SWPB 指令，当为 1 的时候就使能 SWP 和 SWPB 指令。
+- bit9:3：未使用，保留。
+- bit2：C，D Cache 和缓存一致性使能位，为 0 的时候禁止 D Cache 和缓存一致性，为 1 时使能。
+- bit1：A，内存对齐检查使能位，为 0 的时候关闭内存对齐检查，为 1 的时候使能内存对齐检查。
+- bit0：M，MMU 使能位，为 0 的时候禁止 MMU，为 1 的时候使能 MMU。
+
+如果要读写 SCTLR 的话，就可以使用如下命令：
+```s
+MRC p15, 0, <Rt>, c1, c0, 0 ;读取 SCTLR 寄存器，数据保存到 Rt 中。
+MCR p15, 0, <Rt>, c1, c0, 0 ;将 Rt 中的数据写到 SCTLR(c1)寄存器中。
+```
+
+3. **c12寄存器**
+
+c12 寄存器通过不同的配置，其代表的含义也不同
+![alt](./images/Snipaste_2024-11-26_15-29-43.png)
+
+在图中当 MRC/MCR 指令中的 CRn=c12，opc1=0，CRm=c0，opc2=0 的时候就表示此时 c12 为 VBAR 寄存器，也就是向量表基地址寄存器。
+设置中断向量表偏移的时候就需要将新的中断向量表基地址写入 VBAR 中，比如在前面的例程中，代码链接的起始地址为0X87800000，而中断向量表肯定要放到最前面，也就是 0X87800000 这个地址处。
+所以就需要设置 VBAR 为 0X87800000，设置命令如下：
+```s
+ldr r0, =0X87800000 ; r0=0X87800000
+MCR p15, 0, r0, c12, c0, 0 ;将 r0 里面的数据写入到 c12 中，即 c12=0X87800000
+```
+
+4. **c15寄存器**
+
+c15 寄存器也可以通过不同的配置得到不同的含义，参考文档《Cortex-A7 Technical ReferenceManua.pdf》第 68 页“4.2.16 c15 registers”
+
+![alt](./images/Snipaste_2024-11-26_15-33-14.png)
+
+在图中，我们需要 c15 作为 CBAR 寄存器，因为 GIC 的基地址就保存在 CBAR
+中，我们可以通过如下命令获取到 GIC 基地址：
+`MRC p15, 4, r1, c15, c0, 0 ; 获取 GIC 基础地址，基地址保存在 r1 中。`
+
+获取到 GIC 基地址以后就可以设置 GIC 相关寄存器了，比如我们可以读取当前中断 ID，当前中断 ID 保存在 GICC_IAR 中，寄存器 GICC_IAR 属于 CPU 接口端寄存器，寄存器地址相对于 CPU 接口端起始地址的偏移为 0XC，因此获取当前中断 ID 的代码如下：
+
+```asm
+MRC p15, 4, r1, c15, c0, 0 ;获取 GIC 基地址
+ADD r1, r1, #0X2000;GIC 基地址加 0X2000 得到 CPU 接口端寄存器起始地址
+LDR r0, [r1, #0XC] ;读取 CPU 接口端起始地址+0XC 处的寄存器值，也就是寄存器
+                   ;GIC_IAR 的值
+```
+关于 CP15 协处理器就讲解到这里，简单总结一下.
+通过 c0 寄存器可以获取到处理器内核信息；
+通过 c1 寄存器可以使能或禁止 MMU、I/D Cache 等；
+通过 c12 寄存器可以设置中断向量偏移；
+通过 c15 寄存器可以获取 GIC 基地址。
+关于 CP15 的其他寄存器，大家自行查阅本节前面列举的 2 份 ARM 官方资料
+
+#### 17.1.5 中断使能
+
+中断使能包括两部分，一个是 IRQ 或者 FIQ 总中断使能，另一个就是 ID0~ID1019 这 1020个中断源的使能。
+
+1. **IRQ与FIQ总中断使能**
+
+IRQ 和 FIQ 分别是外部中断和快速中断的总开关，就类似家里买的进户总电闸，然后ID0~ID1019 这 1020 个中断源就类似家里面的各个电器开关。
+要想开电视，那肯定要保证进户总电闸是打开的，因此要想使用 I.MX6U 上的外设中断就必须先打开 IRQ 中断(本教程不使用FIQ)。
+在“6.3.2 程序状态寄存器”小节已经讲过了，寄存器 CPSR 的 I=1 禁止 IRQ，当 I=0 使能 IRQ；F=1 禁止 FIQ，F=0 使能 FIQ。
+我们还有更简单的指令来完成 IRQ 或者 FIQ 的使能和禁止，图表所示：
+
+| 指令    | 描述            |
+| ------- | --------------- |
+| cpsid i | 禁止 IRQ 中断。 |
+| cpsie i | 使能 IRQ 中断。 |
+| cpsid f | 禁止 FIQ 中断。 |
+| cpsie f | 使能 FIQ 中断。 |
+
+2. **ID0\~ID1019中断使能**
+
+GIC 寄存器 GICD_ISENABLERn 和 GICD_ ICENABLERn 用来完成外部中断的使能和禁止，对于 Cortex-A7 内核来说中断 ID 只使用了 512 个。
+一个 bit 控制一个中断 ID 的使能，那么就需要 512/32=16 个 GICD_ISENABLER 寄存器来完成中断的使能。
+同理，也需要 16 个GICD_ICENABLER 寄存器来完成中断的禁止。
+其中 GICD_ISENABLER0 的 bit[15:0]对应ID15\~0 的 SGI 中断，GICD_ISENABLER0 的 bit[31:16]对应 ID31\~16 的 PPI 中断。
+剩下的GICD_ISENABLER1~GICD_ISENABLER15 就是控制 SPI 中断的。
+
+#### 17.1.6 中断优先级控制
+
+1. **优先级数配置**
+
+学过 STM32 都知道 Cortex-M 的中断优先级分为抢占优先级和子优先级，两者是可以配置的。
+同样的 Cortex-A7 的中断优先级也可以分为抢占优先级和子优先级，两者同样是可以配置的。
+GIC 控制器最多可以支持 256 个优先级，数字越小，优先级越高！Cortex-A7 选择了 32 个优先级。
+在使用中断的时候需要初始化 GICC_PMR 寄存器，此寄存器用来决定使用几级优先级，寄存器结构如图所示：
+![alt](./images/Snipaste_2024-11-26_19-24-43.png)
+
+GICC_PMR 寄存器只有低 8 位有效，这 8 位最多可以设置 256 个优先级，其他优先级数设置如表所示：
+| bit7:0   | 优先级数       |
+| -------- | -------------- |
+| 11111111 | 256 个优先级。 |
+| 11111110 | 128 个优先级。 |
+| 11111100 | 64 个优先级。  |
+| 11111000 | 32 个优先级    |
+| 11110000 | 16 个优先级。  |
+
+I.MX6U 是 Cortex-A7 内核，所以支持 32 个优先级，因此 GICC_PMR 要设置为 0b11111000。
+
+2. **抢占优先级和子优先级位数设置**
+
+抢占优先级和子优先级各占多少位是由寄存器 GICC_BPR 来决定的，GICC_BPR 寄存器结构如图所示：
+
+![alt](./images/Snipaste_2024-11-26_19-26-57.png)
+
+寄存器 GICC_BPR 只有低 3 位有效，其值不同，抢占优先级和子优先级占用的位数也不同，配置如表所示
+
+| Binary Point | 抢占优先级域 | 子优先级域 | 描述                           |
+| :----------- | :----------- | :--------- | :----------------------------- |
+| 0            | [7:1]        | [0]        | 7级抢占优先级，1 级子优先级。  |
+| 1            | [7:2]        | [1:0]      | 6 级抢占优先级，2 级子优先级。 |
+| 2            | [7:3]        | [2:0]      | 5 级抢占优先级，3 级子优先级。 |
+| 3            | [7:4]        | [3:0]      | 4 级抢占优先级，4 级子优先级。 |
+| 4            | [7:5]        | [4:0]      | 3 级抢占优先级，5 级子优先级。 |
+| 5            | [7:6]        | [5:0]      | 2 级抢占优先级，6 级子优先级。 |
+| 6            | [7:7]        | [6:0]      | 1 级抢占优先级，7 级子优先级。 |
+| 7            | 无           | [7:0]      | 0 级抢占优先级，8 级子优先级。 |
+
+为了简单起见，一般将所有的中断优先级位都配置为抢占优先级，比如 I.MX6U 的优先级位数为 5(32 个优先级)，所以可以设置 Binary point 为 2，表示 5 个优先级位全部为抢占优先级。
+
+3. **优先级设置**
+
+前面已经设置好了 I.MX6U 一共有 32 个抢占优先级，数字越小优先级越高。
+具体要使用某个中断的时候就可以设置其优先级为 0~31。
+
+某个中断 ID 的中断优先级设置由寄存器D_IPRIORITYR 来完成，前面说了 Cortex-A7 使用了 512 个中断 ID，每个中断 ID 配有一个优先级寄存器，所以一共有 512 个 D_IPRIORITYR 寄存器。
+
+如果优先级个数为 32 的话，使用寄存器 D_IPRIORITYR 的 bit7:3 来设置优先级，也就是说实际的优先级要左移 3 位(左移到抢占优先级位置)。比如要设置ID40 中断的优先级为 5，示例代码如下：
+`GICD_IPRIORITYR[40] = 5 << 3;`
+解释：
+0000 0101左移三位  001 01|000
+
+有关优先级设置的内容就讲解到这里，优先级设置主要有三部分：
+
+总结：
+
+①、设置寄存器 GICC_PMR，配置优先级个数，比如 I.MX6U 支持 32 级优先级。(配置个数)
+②、设置抢占优先级和子优先级位数，配置寄存器GICC_BPR，一般为了简单起见，会将所有的位数都设置为抢占优先级。(配置优先级域分配)
+③、设置指定中断 ID的优先级，也就是设置外设优先级,配置寄存器D_IPRIORITYR。
+
+### 17.2 硬件原理分析
+
+同样使用按键控制，原理图见第十五章
+
+### 17.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 9_int
+
+本章试验的功能和第十五章一样，只是按键采用中断的方式处理。
+当按下按键 KEY0 以后就打开蜂鸣器，再次按下按键 KEY0 就关闭蜂鸣器。在第十六章的试验上完成本章试验。
+
+#### 17.3.1 移植SDK中有关中断的相关文件
+
+将 SDK 包中的文件 core_ca7.h 拷贝到本章试验工程中的“imx6ul”文件夹中，参考试验“9_int”中 core_ca7.h 进行修改。
+主要留下和 GIC 相关的内容，我们重点是需要 core_ca7.h 中的 10 个 API 函数。
+
+十个函数如下：
+
+| 函数                    | 描述                           |
+| ----------------------- | ------------------------------ |
+| GIC_Init                | 初始化 GIC。                   |
+| GIC_EnableIRQ           | 使能指定的外设中断。           |
+| GIC_DisableIRQ          | 关闭指定的外设中断。           |
+| GIC_AcknowledgeIRQ      | 返回中断号。                   |
+| GIC_DeactivateIRQ       | 无效化指定中断。               |
+| GIC_GetRunningPriority  | 获取当前正在运行的中断优先级。 |
+| GIC_SetPriorityGrouping | 设置抢占优先级位数。           |
+| GIC_GetPriorityGrouping | 获取抢占优先级位数。           |
+| GIC_SetPriority         | 设置指定中断的优先级。         |
+| GIC_GetPriority         | 获取指定中断的优先级。         |
+
+移植好 core_ca7.h 以后，修改文件 imx6ul.h，在里面加上如下一行代码：
+`#include "core_ca7.h"`
+
+#### 17.3.2 重新编写start.S
+
+```S
+/***************************************************************
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+文件名 : start.s
+作者 : 左忠凯
+版本 : V2.0
+描述 : I.MX6U-ALPHA/I.MX6ULL 开发板启动文件，完成 C 环境初始化，
+       C 环境初始化完成以后跳转到 C 代码。
+其他 : 无
+论坛 : www.openedv.com
+日志 : 初版 V1.0 2019/1/3 左忠凯修改
+       V2.0 2019/1/4 左忠凯修改
+       添加中断相关定义
+**************************************************************/
+
+1 .global _start /* 全局标号 */
+2
+3 /*
+4 * 描述： _start 函数，首先是中断向量表的创建
+5 */
+6 _start:
+ /*中断向量表，ldr pc用来初始化各个中断服务程序，pc指向下一个要执行的程序*/
+7   ldr pc, =Reset_Handler /* 复位中断 */
+8   ldr pc, =Undefined_Handler /* 未定义指令中断 */
+9   ldr pc, =SVC_Handler /* SVC(Supervisor)中断*/
+10  ldr pc, =PrefAbort_Handler /* 预取终止中断 */
+11  ldr pc, =DataAbort_Handler /* 数据终止中断 */
+12  ldr pc, =NotUsed_Handler /* 未使用中断 */
+13  ldr pc, =IRQ_Handler /* IRQ 中断 */
+14  ldr pc, =FIQ_Handler /* FIQ(快速中断) */
+15
+16 /* 复位中断 */
+17 Reset_Handler:
+18
+19  cpsid i /* 关闭全局中断 */
+20
+21 /* 关闭 I,DCache 和 MMU
+22 * 采取读-改-写的方式。
+23 */
+24  mrc p15, 0, r0, c1, c0, 0 /* 读取 CP15 的 C1 寄存器到 R0 中 */
+25  bic r0, r0, #(0x1 << 12) /* 清除 C1 的 I 位，关闭 I Cache */
+26  bic r0, r0, #(0x1 << 2) /* 清除 C1 的 C 位，关闭 D Cache */
+27  bic r0, r0, #0x2 /* 清除 C1 的 A 位，关闭对齐检查 */
+28  bic r0, r0, #(0x1 << 11) /* 清除 C1 的 Z 位，关闭分支预测 */
+29  bic r0, r0, #0x1 /* 清除 C1 的 M 位，关闭 MMU */
+30  mcr p15, 0, r0, c1, c0, 0 /* 将 r0 的值写入到 CP15 的 C1 中 */
+31
+32
+33 #if 0
+34  /* 汇编版本设置中断向量表偏移 */
+35  ldr r0, =0X87800000
+36
+37  dsb
+38  isb
+39  mcr p15, 0, r0, c12, c0, 0
+40  dsb
+41  isb
+42 #endif
+43
+44 /* 设置各个模式下的栈指针，
+45 * 注意：IMX6UL 的堆栈是向下增长的！
+46 * 堆栈指针地址一定要是 4 字节地址对齐的！！！
+47 * DDR 范围:0X80000000~0X9FFFFFFF 或者 0X8FFFFFFF
+48 */
+49 /* 进入 IRQ 模式 */
+50  mrs r0, cpsr
+51  bic r0, r0, #0x1f /* 将 r0 的低 5 位清零，也就是 cpsr 的 M0~M4 */
+52  orr r0, r0, #0x12 /* r0 或上 0x12,表示使用 IRQ 模式 */
+53  msr cpsr, r0 /* 将 r0 的数据写入到 cpsr 中 */
+54  ldr sp, =0x80600000 /* IRQ 模式栈首地址为 0X80600000,大小为 2MB */
+55
+56 /* 进入 SYS 模式 */
+57  mrs r0, cpsr
+58  bic r0, r0, #0x1f /* 将 r0 的低 5 位清零，也就是 cpsr 的 M0~M4 */
+59  orr r0, r0, #0x1f /* r0 或上 0x1f,表示使用 SYS 模式 */
+60  msr cpsr, r0 /* 将 r0 的数据写入到 cpsr 中 */
+61  ldr sp, =0x80400000 /* SYS 模式栈首地址为 0X80400000,大小为 2MB */
+62
+63 /* 进入 SVC 模式 */
+64  mrs r0, cpsr
+65  bic r0, r0, #0x1f /* 将 r0 的低 5 位清零，也就是 cpsr 的 M0~M4 */
+66  orr r0, r0, #0x13 /* r0 或上 0x13,表示使用 SVC 模式 */
+67  msr cpsr, r0 /* 将 r0 的数据写入到 cpsr 中 */
+68  ldr sp, =0X80200000 /* SVC 模式栈首地址为 0X80200000,大小为 2MB */
+69
+70  cpsie i /* 打开全局中断 */
+71 
+72 #if 0
+73 /* 使能 IRQ 中断 */
+74  mrs r0, cpsr /* 读取 cpsr 寄存器值到 r0 中 */
+75  bic r0, r0, #0x80 /* 将 r0 寄存器中 bit7 清零，也就是 CPSR 中
+76                    * 的 I 位清零，表示允许 IRQ 中断
+77                    */
+78  msr cpsr, r0 /* 将 r0 重新写入到 cpsr 中 */
+79 #endif
+80 
+81  b main /* 跳转到 main 函数 */
+82
+83 /* 未定义中断 */
+84 Undefined_Handler:
+85  ldr r0, =Undefined_Handler
+86  bx r0
+87 
+88 /* SVC 中断 */
+89 SVC_Handler:
+90  ldr r0, =SVC_Handler
+91  bx r0
+92
+93 /* 预取终止中断 */
+94 PrefAbort_Handler:
+95  ldr r0, =PrefAbort_Handler
+96  bx r0
+97 
+98 /* 数据终止中断 */
+99 DataAbort_Handler:
+100 ldr r0, =DataAbort_Handler
+101 bx r0
+102
+103 /* 未使用的中断 */
+104 NotUsed_Handler:
+105
+106 ldr r0, =NotUsed_Handler
+107 bx r0
+108
+109 /* IRQ 中断！重点！！！！！ */
+110 IRQ_Handler:
+    /*保存现场*/
+111   push {lr} /* 保存 lr 地址 */
+112   push {r0-r3, r12} /* 保存 r0-r3，r12 寄存器 */
+113
+114   mrs r0, spsr /* 读取 spsr 寄存器 */
+115   push {r0} /* 保存 spsr 寄存器 */
+116
+117   mrc p15, 4, r1, c15, c0, 0 /* 将 CP15 的 C0 内的值到 R1 寄存器中
+118                               * 参考文档 ARM Cortex-A(armV7)编程手册 V4.0.pdf P49
+119                               * Cortex-A7 Technical ReferenceManua.pdf P68 P138
+120                               *读取GIC基地址到R1/
+121   add r1, r1, #0X2000 /* GIC 基地址加 0X2000，得到 CPU 接口端基地址 */
+122   ldr r0, [r1, #0XC] /* CPU 接口端基地址加 0X0C 就是 GICC_IAR 寄存器，
+123                       * GICC_IAR 保存着当前发生中断的中断号，我们要根据
+124                       * 这个中断号来绝对调用哪个中断服务函数
+125                       * 把中断号存入R0/
+126   push {r0, r1}       /* 保存 r0,r1 */
+127
+128   cps #0x13 /* 进入 SVC 模式，允许其他中断再次进去 */
+129
+130   push {lr} /* 保存 SVC 模式的 lr 寄存器 */
+131   ldr r2, =system_irqhandler /* 加载 C 语言中断处理函数到 r2 寄存器中*/
+132   blx r2 /* 运行 C 语言中断处理函数，带有一个参数 */
+133
+134   pop {lr} /* 执行完 C 语言中断服务函数，lr 出栈 */
+135   cps #0x12 /* 进入 IRQ 模式 */
+136   pop {r0, r1}
+137   str r0, [r1, #0X10] /* 中断执行完成，写 EOIR */
+138
+    /*恢复现场*/
+139   pop {r0}
+140   msr spsr_cxsf, r0 /* 恢复 spsr */
+141
+142   pop {r0-r3, r12} /* r0-r3,r12 出栈 */
+143   pop {lr} /* lr 出栈 */
+144   subs pc, lr, #4 /* 将 lr-4 赋给 pc */
+145
+146 /* FIQ 中断 */
+147 FIQ_Handler:
+148
+149   ldr r0, =FIQ_Handler
+150   bx r0 
+```
+
+补充理解：
+
+    中断向量表理解：
+    _start 是上电后执行的第一个指令，
+    直接将复位中断，加载到PC，然后进一步执行复位中断，中断最后直接b main
+
+    IMX6ULL中有八个中断，对应地址为0x00~0x1C。
+    由于其为32位的地址空间，故而一条指令占4B
+    故而，
+    4   ldr pc, =Reset_Handler /* 复位中断 */
+    5   ldr pc, =Undefined_Handler /* 未定义指令中断 */
+    6   ldr pc, =SVC_Handler /* SVC(Supervisor)中断 */
+    7   ldr pc, =PrefAbort_Handler /* 预取终止中断 */
+    8   ldr pc, =DataAbort_Handler /* 数据终止中断 */
+    9   ldr pc, =NotUsed_Handler /* 未使用中断 */
+    10  ldr pc, =IRQ_Handler /* IRQ 中断 */
+    11  ldr pc, =FIQ_Handler /* FIQ(快速中断)未定义中断 */
+    对应于0x00~0x1C，每当对应中断发生后，硬件固定执行对应地址的指令
+    及对应于每条指令，然后每条指令的标号，对应于下面的中断处理程序(汇编)
+
+    实际代码下载时，并不是在0x00上，故而需要对执行地址进行对应偏移，
+    通过cp15的c12寄存器配置成VBAR 可以实现对应的基地址偏移。
+
+汇编代码解释：
+
+第 6 到 14 行是中断向量表，17.1.2 小节已经讲解过了。
+第 17 到 81 行是复位中断服务函数 Reset_Handler，第 19 行先调用指令“cpsid i”关闭 IRQ，第 24 到 30 行是关闭 I/D Cache、MMU、对齐检测和分支预测。
+第 33 行到 42 行是汇编版本的中断向量表重映射。
+第 50 到 68 行是设置不同模式下的 sp 指针，分别设置 IRQ 模式、SYS 模式和 SVC 模式的栈指针，每种模式的栈大小都是 2MB。
+第 70 行调用指令“cpsie i”重新打开IRQ 中断，第 72 到 79 行是操作 CPSR 寄存器来打开 IRQ 中断。
+当初始化工作都完成以后就可以进入到 main 函数了，第 81 行就是跳转到 main 函数。
+以上几位复位中断执行的默认操作，一旦上电或者复位，都会执行这些操作。
+
+第 110 到 144 行是中断服务函数 IRQ_Handler，这个是本章的重点，因为所有的外部中断最终都会触发 IRQ 中断，所以 IRQ 中断服务函数主要的工作就是区分当前发生的什么中断(中断 ID)？然后针对不同的外部中断做出不同的处理。
+
+第 111 到 115 行是保存现场，
+111行先保存栈顶指针(LR 保存返回地址，执行完中断程序，可利用此地址返回)
+112行，保存所有的执行现场寄存器值，R0-R3 ，R12寄存器
+114 读取SPSR 保存有程序运行状态，115行入栈
+补充： 
+  
+    SP保存的栈顶指针，指向当前栈的顶部
+    LR保存存储函数/中断返回的地址
+
+第 117 到 122行是获取当前中断号，中断号被保存到了 r0 寄存器中。
+128行，保存完现场，可以允许其他中断进行抢占，push lr 将SVC返回地址入栈,方便执行完函数进行返回。(模式切换本身不会修改通用寄存器的值)(这个LR为了于实现中断抢占)
+
+第 131 和 132 行才是中断处理的重点，这两行相当于调用了函数 system_irqhandler。
+函数 system_irqhandler 是一个 C 语言函数，此函数有一个参数，这个参数中断号，所以我们需要传递一个参数。汇编中调用 C 函数如何实现参数传递呢？
+根据 ATPCS(ARM-Thumb Procedure Call Standard)定义的函数参数传递规则，在汇编调用 C 函数的时候建议形参不要超过 4 个，形参可以由 r0~r3 这四个寄存器来传递，如果形参大于 4 个，那么大于 4 个的部分要使用堆栈进行传递。
+所以给 r0 寄存器写入中断号就可以了函数 system_irqhandler 的参数传递，此步骤我们前面已经完成，并存入栈中。
+
+中断的真正处理过程其实是在函数 system_irqhandler 中完成，稍后需要编写函数 system_irqhandler。
+blx r2跳入函数中进行执行了，参数存放在R0中，为对应中断号
+
+第 137 行向 GICC_EOIR 寄存器写入刚刚处理完成的中断号，当一个中断处理完成以后必须向 GICC_EOIR 寄存器写入其中断号表示中断处理完成。
+
+第 139 到 143 行就是恢复现场。
+
+第 144 行中断处理完成以后就要重新返回到曾经被中断打断的地方运行，这里为什么要将
+lr-4 然后赋给 pc 呢？
+而不是直接将 lr 赋值给 pc？
+ARM 的指令是三级流水线：取指、译指、执行，pc 指向的是正在取值的地址，这就是很多书上说的 pc=当前执行指令地址+8。
+比如下面代码示例：
+```S
+0X2000 MOV R1, R0 ;执行
+0X2004 MOV R2, R3 ;译指
+0X2008 MOV R4, R5 ;取值 PC
+```
+上面示例代码中，左侧一列是地址，中间是指令，最右边是流水线。
+当前正在执行 0X2000地址处的指令“MOV R1, R0”，但是 PC 里面已经保存了 0X2008 地址处的指令“MOV R4, R5”。
+假设此时发生了中断，中断发生的时候保存在 lr 中的是 pc 的值，也就是地址 0X2008。当中断处理完成以后肯定需要回到被中断点接着执行，如果直接跳转到 lr 里面保存的地址处(0X2008)开始运行，那么就有一个指令没有执行，那就是地址 0X2004 处的指令“MOV R2, R3”，显然这是一个很严重的错误！所以就需要将 lr-4 赋值给 pc，也就是 pc=0X2004，从指令“MOV R2，R3”开始执行。
+
+入栈顺序：
+LR入栈--当前指令地址
+R0-R3，R12入栈--当前指令寄存器
+入栈R0 ---SPSR寄存器
+入栈R0,R1 ---中断号，CPU接口基地址
+入栈SVC模式 LR --方便正确返回
+
+出栈：
+LR SVC模式下LR
+R0 R1 --接口地址中断号，写入EOIR标志完成
+出栈R0 --SPSR寄存器恢复
+出栈R0-R3 R12 执行寄存器值
+出栈LR，当前指令地址
+ ***
+汇编中调用C语言函数：
+在汇编中调用 C 语言函数是嵌入式开发中常见的操作。
+ARM 体系结构使用约定的调用规则来处理从汇编代码到 C 语言函数的调用和返回。
+C 语言编译器通常会生成符合 ARM 调用约定的代码，而汇编代码需要遵循这些约定来正确调用 C 函数。
+以下是汇编代码调用 C 语言函数的基本步骤：
+1. 准备调用参数
+根据 ARM 调用约定（通常是 AAPCS 或 AAPCS64），C 函数的参数通常通过寄存器传递。在 ARM 中，前四个参数通常通过以下寄存器传递：
+R0：第一个参数
+R1：第二个参数
+R2：第三个参数
+R3：第四个参数
+如果有更多的参数，它们将通过栈传递。
+2. 调用 C 语言函数
+汇编调用 C 函数时，通常使用 bl（branch with link）指令。
+该指令会跳转到目标函数地址并保存返回地址到 LR（链接寄存器）。
+当 C 函数执行完后，会使用 bx lr 或 mov pc, lr 返回到调用处。
+3. 返回值处理
+如果 C 函数有返回值，返回值通常存储在 R0 寄存器中。
+如果 C 函数没有返回值（void），则不需要关注返回值。
+4. 栈的处理
+在汇编调用 C 函数之前，如果需要保存一些寄存器（例如，保存返回地址或其他寄存器的值），应该先将它们压入栈中，调用 C 函数后再恢复。
+ ***
+IRQ程序段重点分析：
+```asm
+110 IRQ_Handler:
+    /*保存现场*/
+111   push {lr} /* 保存 lr 地址 */
+112   push {r0-r3, r12} /* 保存 r0-r3，r12 寄存器 */
+113
+114   mrs r0, spsr /* 读取 spsr 寄存器 */
+115   push {r0} /* 保存 spsr 寄存器 */
+116
+117   mrc p15, 4, r1, c15, c0, 0 /* 将 CP15 的 C0 内的值到 R1 寄存器中
+118                               * 参考文档 ARM Cortex-A(armV7)编程手册 V4.0.pdf P49
+119                               * Cortex-A7 Technical ReferenceManua.pdf P68 P138
+120                               *读取GIC基地址到R1/
+121   add r1, r1, #0X2000 /* GIC 基地址加 0X2000，得到 CPU 接口端基地址 */
+122   ldr r0, [r1, #0XC] /* CPU 接口端基地址加 0X0C 就是 GICC_IAR 寄存器，
+123                       * GICC_IAR 保存着当前发生中断的中断号，我们要根据
+124                       * 这个中断号来绝对调用哪个中断服务函数
+125                       * 把中断号存入R0/
+126   push {r0, r1}       /* 保存 r0,r1 */
+127
+128   cps #0x13 /* 进入 SVC 模式，允许其他中断再次进去 */
+129
+130   push {lr} /* 保存 SVC 模式的 lr 寄存器，因为要执行函数了 */
+131   ldr r2, =system_irqhandler /* 加载 C 语言中断处理函数到 r2 寄存器中*/
+132   blx r2 /* 运行 C 语言中断处理函数，带有一个参数 */
+133
+134   pop {lr} /* 执行完 C 语言中断服务函数，lr 出栈 */
+135   cps #0x12 /* 进入 IRQ 模式 */
+136   pop {r0, r1}
+137   str r0, [r1, #0X10] /* 中断执行完成，写 EOIR */
+138
+    /*恢复现场*/
+139   pop {r0}
+140   msr spsr_cxsf, r0 /* 恢复 spsr */
+141
+142   pop {r0-r3, r12} /* r0-r3,r12 出栈 */
+143   pop {lr} /* lr 出栈 */
+144   subs pc, lr, #4 /* 将 lr-4 赋给 pc */
+```
+中断发生时，或者进入函数时，都要先保存现场。
+LR保存有返回指令地址，方便中断返回。
+故而先将LR入栈
+然后将寄存器状态入栈R0-R3，R12入栈
+读取SPSR程序状态寄存器，入栈
+至此完成现场的保存
+利用MRC指令读取CP15的值获取GIC基地址
+并计算出CPU接口端基地址与GICC——IAR寄存器获取中断号。
+然后将R0 R1入栈保存接口基地址和中断号
+进入SVC模式(内核模式)，允许中断处理期间其他中断进入。
+并保存此时SVC模式下的LR寄存器入栈，方便可以正常恢复此时的LR，为下面执行函数做准备
+然后进入C语言中断处理函数，R0保存有中断号，切换模式并没有改变R0寄存器值(此时，重要数据都入栈了，寄存器值可以修改，故而没有保存现场)
+执行完函数后，需要返回到函数执行前地址pop LR 此时，LR存有函数执行前指令地址
+然后cps #0x12恢复为IRQ模式进行现场的恢复，此时SVC模式切换回IRQ模式，ARM处理器可以自动使用LR地址跳回，无需手动bx LR跳转 
+然后出栈GIC的CPU接口地址和中断号，写EOIR标志中断执行完毕
+然后恢复SPSR
+恢复R0-R3 r12
+最后将LR出栈，把LR-4赋给PC表示下一条要执行的指令
+
+#### 17.3.3 通用驱动文件编写
+
+在 start.S 文件中我们在中断服务函数 IRQ_Handler 中调用了 C 函数 system_irqhandler 来处理具体的中断。
+此函数有一个参数，参数是中断号，但是函数 system_irqhandler 的具体内容还没有实现，所以需要实现函数 system_irqhandler 的具体内容。
+不同的中断源对应不同的中断处理函数，I.MX6U 有 160 个中断源，所以需要 160 个中断处理函数，我们可以将这些中断处理函数放到一个数组里面，中断处理函数在数组中的标号就是其对应的中断号。(中断号不等于中断ID)
+当中断发生以后函数 system_irqhandler 根据中断号从中断处理函数数组中找到对应的中断处理函数并执行即可。
+在 bsp 目录下新建名为“int”的文件夹，在 bsp/int 文件夹里面创建 bsp_int.c 和 bsp_int.h 这两个文件。在 bsp_int.h 文件里面输入如下内容：
+```C
+1 #ifndef _BSP_INT_H
+2 #define _BSP_INT_H
+3 #include "imx6ul.h"
+4 /***************************************************************
+5 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+6 文件名 : bsp_int.h
+7 作者 : 左忠凯
+8 版本 : V1.0
+9 描述 : 中断驱动头文件。
+10 其他 : 无
+11 论坛 : www.openedv.com
+12 日志 : 初版 V1.0 2019/1/4 左忠凯创建
+13 ***************************************************************/
+14
+15 /* 中断处理函数形式 */
+16 typedef void (*system_irq_handler_t) (unsigned int giccIar,void *param);//定义函数指针类型
+17
+18 /* 中断处理函数结构体*/
+19 typedef struct _sys_irq_handle
+20 {
+21    system_irq_handler_t irqHandler; /* 中断处理函数 */
+22    void *userParam; /* 中断处理函数参数 */
+23 } sys_irq_handle_t;
+24
+25 /* 函数声明 */
+26 void int_init(void);
+27 void system_irqtable_init(void);
+28 void system_register_irqhandler(IRQn_Type irq,system_irq_handler_t handler,
+void *userParam);
+29 void system_irqhandler(unsigned int giccIar);
+30 void default_irqhandler(unsigned int giccIar, void *userParam);
+31
+32 #endif
+```
+第 16~23 行是中断处理结构体，结构体 sys_irq_handle_t 包含一个中断处理函数和中断处理函数的用户参数。
+一个中断源就需要一个 sys_irq_handle_t 变量，I.MX6U 有 160 个中断源，因此需要 160 个 sys_irq_handle_t 组成中断处理数组。
+
+在 bsp_int.c 中输入如下所示代码:
+```C
+1 #include "bsp_int.h"
+2 /***************************************************************
+3 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+4 文件名 : bsp_int.c
+5 作者 : 左忠凯
+6 版本 : V1.0
+7 描述 : 中断驱动文件。
+8 其他 : 无
+9 论坛 : www.openedv.com
+10 日志 : 初版 V1.0 2019/1/4 左忠凯创建
+11 ***************************************************************/
+12
+13 /* 中断嵌套计数器 */
+14 static unsigned int irqNesting;
+15
+16 /* 中断服务函数表 */
+17 static sys_irq_handle_t irqTable[NUMBER_OF_INT_VECTORS];//对应160中断源个数
+18
+19 /*
+20 * @description : 中断初始化函数
+21 * @param : 无
+22 * @return : 无
+23 */
+24 void int_init(void)
+25 {
+26    GIC_Init(); /* 初始化 GIC */
+27    system_irqtable_init(); /* 初始化中断表 */
+28    __set_VBAR((uint32_t)0x87800000); /* 中断向量表偏移 无需再C语言中设@core_ca*/
+29 }
+30
+31 /*
+32 * @description : 初始化中断服务函数表
+33 * @param : 无
+34 * @return : 无
+35 */
+36 void system_irqtable_init(void)
+37 {
+38    unsigned int i = 0;
+39    irqNesting = 0;
+40
+41    /* 先将所有的中断服务函数设置为默认值 */
+42    for(i = 0; i < NUMBER_OF_INT_VECTORS; i++)
+43    {
+44        system_register_irqhandler( (IRQn_Type)i,default_irqhandler,NULL);
+45    }
+46 }
+47
+48 /*
+49 * @description : 给指定的中断号注册中断服务函数
+50 * @param - irq : 要注册的中断号
+51 * @param - handler : 要注册的中断处理函数
+52 * @param - usrParam : 中断服务处理函数参数
+53 * @return : 无
+54 */
+55 void system_register_irqhandler(IRQn_Type irq,system_irq_handler_t handler,void *userParam)
+56 {
+57    irqTable[irq].irqHandler = handler;
+58    irqTable[irq].userParam = userParam;
+59 }
+60
+61 /*
+62  * @description : C 语言中断服务函数，irq 汇编中断服务函数会
+63    调用此函数，此函数通过在中断服务列表中查
+64    找指定中断号所对应的中断处理函数并执行。
+65  * @param - giccIar : 中断号
+66  * @return : 无
+67  */
+68 void system_irqhandler(unsigned int giccIar)
+69 {
+70
+71    uint32_t intNum = giccIar & 0x3FFUL;
+72
+73    /* 检查中断号是否符合要求 */
+74    if ((intNum == 1020) || (intNum >= NUMBER_OF_INT_VECTORS))
+75    {
+76      return;
+77    }
+78
+79    irqNesting++; /* 中断嵌套计数器加一 */
+80
+81    /* 根据传递进来的中断号，在 irqTable 中调用确定的中断服务函数*/
+82    irqTable[intNum].irqHandler(intNum, irqTable[intNum].userParam);
+83
+84    irqNesting--; /* 中断执行完成，中断嵌套寄存器减一 */
+85
+86 }
+87
+88 /*
+89  * @description : 默认中断服务函数
+90  * @param - giccIar : 中断号
+91  * @param - usrParam : 中断服务处理函数参数
+92  * @return : 无
+93  */
+94 void default_irqhandler(unsigned int giccIar, void *userParam)
+95 {
+96    while(1)
+97    {
+98    }
+99 }
+```
+第 14 行定义了一个变量 irqNesting，此变量作为中断嵌套计数器。
+第 17 行定了中断服务函数数组 irqTable，这是一个 sys_irq_handle_t 类型的结构体数组，数组大小为 I.MX6U 的中断源个数，即 160 个。
+第 24~28 行是中断初始化函数 int_init，在此函数中首先初始化了 GIC，然后初始化了中断服务函数表，最终设置了中断向量表偏移。
+第 36~46 行是中断服务函数表初始化函数 system_irqtable_init，初始化 irqTable，给其赋初值。
+第 55~59 行是注册中断处理函数 system_register_irqhandler，此函数用来给指定的中断号注册中断处理函数。如果要使用某个外设中断，那就必须调用此函数来给这个中断注册一个中断处理函数。
+第 68~86 行就是前面在 start.S 中调用的 system_irqhandler 函数，此函数根据中断号在中断处理函数表 irqTable 中取出对应的中断处理函数并执行。
+第 94~99 行是默认中断处理函数 default_irqhandler，这是一个空函数，主要用来给初始化中断函数处理表。
+
+补充：中断ID到中断号的对应
+
+    uint32_t intNum = giccIar & 0x3FFUL;
+    giccIar 是从 GIC (Generic Interrupt Controller) 中的 GICC_IAR 寄存器读取到的值。该寄存器包含了当前正在处理中断的 中断 ID。
+
+    在 ARM 的 GIC 系统中，GICC_IAR 寄存器的值包含了一个 32 位的数据，其中 低 10 位（即 0-9 位）存储了 中断 ID，高位则用于表示其他信息（如是否有新的中断请求、优先级等）。
+    通过与掩码0x3FF位与的操作可以提取到中断ID
+    IRQn枚举中，0~160个中断号愚中断ID实际对应即可。
+
+#### 17.3.4修改GPIO驱动文件
+
+在前几章节试验中我们只是使用到了 GPIO 最基本的输入输出功能，本章我们需要使用GPIO 的中断功能。
+所以需要修改文件 GPIO 的驱动文件 bsp_gpio.c 和 bsp_gpio.h，加上中断相关函数。
+关于 GPIO 中断内容已经在 8.1.5 小节进行了详细的讲解，这里就不赘述了。
+打开bsp_gpio.h 文件，重新输入如下内容：
+使能中断，配置中断，编写中断服务函数并进行注册
+```C
+1 #ifndef _BSP_GPIO_H
+2 #define _BSP_GPIO_H
+3 #include "imx6ul.h"
+4 /***************************************************************
+5 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+6 文件名 : bsp_gpio.h
+7 作者 : 左忠凯
+8 版本 : V1.0
+9 描述 : GPIO 操作文件头文件。
+10 其他 : 无
+11 论坛 : www.openedv.com
+12 日志 : 初版 V1.0 2019/1/4 左忠凯创建
+13 V2.0 2019/1/4 左忠凯修改
+14 添加 GPIO 中断相关定义
+15
+16 ***************************************************************/
+17
+18 /*
+19  * 枚举类型和结构体定义
+20  */
+21 typedef enum _gpio_pin_direction
+22 {
+23    kGPIO_DigitalInput = 0U, /* 输入 */
+24    kGPIO_DigitalOutput = 1U, /* 输出 */
+25 } gpio_pin_direction_t;//方向类型
+26
+27 /*
+28  * GPIO 中断触发类型枚举
+29  */
+30 typedef enum _gpio_interrupt_mode
+31 {
+32    kGPIO_NoIntmode = 0U, /* 无中断功能 */
+33    kGPIO_IntLowLevel = 1U, /* 低电平触发 */
+34    kGPIO_IntHighLevel = 2U, /* 高电平触发 */
+35    kGPIO_IntRisingEdge = 3U, /* 上升沿触发 */
+36    kGPIO_IntFallingEdge = 4U, /* 下降沿触发 */
+37    kGPIO_IntRisingOrFallingEdge = 5U, /* 上升沿和下降沿都触发 */
+38 } gpio_interrupt_mode_t; //中断类型 GPIO功能寄存器设置ICR位
+39
+40 /*
+41  * GPIO 配置结构体
+42  */ 
+43 typedef struct _gpio_pin_config
+44 {
+45    gpio_pin_direction_t direction; /* GPIO 方向:输入还是输出 */
+46    uint8_t outputLogic; /* 如果是输出的话，默认输出电平 */
+47    gpio_interrupt_mode_t interruptMode; /* 中断方式 */
+48 } gpio_pin_config_t;//GPIO配置结构体
+49
+50
+51 /* 函数声明 */
+52 void gpio_init(GPIO_Type *base, int pin, gpio_pin_config_t *config);
+53 int gpio_pinread(GPIO_Type *base, int pin);
+54 void gpio_pinwrite(GPIO_Type *base, int pin, int value);
+55 void gpio_intconfig(GPIO_Type* base, unsigned int pin,gpio_interrupt_mode_t pinInterruptMode);
+56 void gpio_enableint(GPIO_Type* base, unsigned int pin);
+57 void gpio_disableint(GPIO_Type* base, unsigned int pin);
+58 void gpio_clearintflags(GPIO_Type* base, unsigned int pin);
+59
+60 #endif
+```
+相比前面试验的 bsp_gpio.h 文件，“示例代码”中添加了一个新枚举类型：gpio_interrupt_mode_t，枚举出了 GPIO 所有的中断触发类型。
+还修改了结构体 gpio_pin_config_t，在里面加入了 interruptMode 成员变量。
+最后就是添加了一些跟中断有关的函数声明，bsp_gpio.h文件的内容总体还是比较简单的。
+
+```C
+1 #include "bsp_gpio.h"
+2 /***************************************************************
+3  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+4  文件名 : bsp_gpio.c
+5  作者 : 左忠凯
+6  版本 : V1.0
+7  描述 : GPIO 操作文件。
+8  其他 : 无
+9  论坛 : www.openedv.com
+10 日志 : 初版 V1.0 2019/1/4 左忠凯创建
+11 V2.0 2019/1/4 左忠凯修改:
+12 修改 gpio_init()函数，支持中断配置.
+13 添加 gpio_intconfig()函数，初始化中断
+14 添加 gpio_enableint()函数，使能中断
+15 添加 gpio_clearintflags()函数，清除中断标志位
+16
+17 ***************************************************************/
+18
+19 /*
+20  * @description : GPIO 初始化。
+21  * @param - base : 要初始化的 GPIO 组。
+22  * @param - pin : 要初始化 GPIO 在组内的编号。
+23  * @param - config : GPIO 配置结构体。
+24  * @return : 无
+25  */
+26 void gpio_init(GPIO_Type *base, int pin, gpio_pin_config_t *config)
+27 {
+28    base->IMR &= ~(1U << pin);
+29
+30    if(config->direction == kGPIO_DigitalInput) /* GPIO 作为输入 */
+31    {
+32      base->GDIR &= ~( 1 << pin);
+33    }
+34    else /* 输出 */
+35    {
+36    base->GDIR |= 1 << pin;
+37    gpio_pinwrite(base,pin, config->outputLogic);/* 设置默认电平 */
+38    }
+39    gpio_intconfig(base, pin, config->interruptMode);/* 中断功能配置 */
+40 }
+41
+42 /*
+43  * @description : 读取指定 GPIO 的电平值 。
+44  * @param – base : 要读取的 GPIO 组。
+45  * @param - pin : 要读取的 GPIO 脚号。
+46  * @return : 无
+47  */
+48 int gpio_pinread(GPIO_Type *base, int pin)
+49 {
+50    return (((base->DR) >> pin) & 0x1);
+51 }
+52 
+53 /*
+54  * @description : 指定 GPIO 输出高或者低电平 。
+55  * @param - base : 要输出的的 GPIO 组。
+56  * @param - pin : 要输出的 GPIO 脚号。
+57  * @param – value : 要输出的电平，1 输出高电平， 0 输出低低电平
+58  * @return : 无
+59  */
+60 void gpio_pinwrite(GPIO_Type *base, int pin, int value)
+61 {
+62    if (value == 0U)
+63    {
+64      base->DR &= ~(1U << pin); /* 输出低电平 */
+65    }
+66    else
+67    {
+68      base->DR |= (1U << pin); /* 输出高电平 */
+69    }
+70 }
+71
+72 /*
+73  * @description : 设置 GPIO 的中断配置功能
+74  * @param - base : 要配置的 IO 所在的 GPIO 组。
+75  * @param - pin : 要配置的 GPIO 脚号。
+76  * @param – pinInterruptMode: 中断模式，参考 gpio_interrupt_mode_t
+77  * @return : 无
+78  */
+79 void gpio_intconfig(GPIO_Type* base, unsigned int pin,gpio_interrupt_mode_t pin_int_mode)
+80 {
+81    volatile uint32_t *icr;
+82    uint32_t icrShift;
+83
+84    icrShift = pin;
+85
+86    base->EDGE_SEL &= ~(1U << pin);
+87
+88    if(pin < 16) /* 低 16 位 */
+89    {
+90      icr = &(base->ICR1);
+91    }
+92    else /* 高 16 位 */
+93    {
+94      icr = &(base->ICR2);
+95      icrShift -= 16;
+96    }
+97    switch(pin_int_mode)
+98    {
+99      case(kGPIO_IntLowLevel):
+100        *icr &= ~(3U << (2 * icrShift));
+101        break;
+102     case(kGPIO_IntHighLevel):
+103       *icr = (*icr & (~(3U << (2 * icrShift)))) |(1U << (2 * icrShift));
+104       break;
+105     case(kGPIO_IntRisingEdge):
+106       *icr = (*icr & (~(3U << (2 * icrShift)))) |(2U << (2 * icrShift));
+107       break;
+108     case(kGPIO_IntFallingEdge):
+109       *icr |= (3U << (2 * icrShift));
+110       break;
+111     case(kGPIO_IntRisingOrFallingEdge):
+112       base->EDGE_SEL |= (1U << pin);
+113       break;
+114     default:
+115       break;
+116 }
+117 }
+118
+119 /*
+120  * @description : 使能 GPIO 的中断功能
+121  * @param - base : 要使能的 IO 所在的 GPIO 组。
+122  * @param - pin : 要使能的 GPIO 在组内的编号。
+123  * @return : 无
+124  */
+125 void gpio_enableint(GPIO_Type* base, unsigned int pin)
+126 {
+127     base->IMR |= (1 << pin);
+128 }
+129
+130 /*
+131  * @description : 禁止 GPIO 的中断功能
+132  * @param - base : 要禁止的 IO 所在的 GPIO 组。
+133  * @param - pin : 要禁止的 GPIO 在组内的编号。
+134  * @return : 无
+135  */
+136 void gpio_disableint(GPIO_Type* base, unsigned int pin)
+137 {
+138     base->IMR &= ~(1 << pin);
+139 }
+140
+141 /*
+142  * @description : 清除中断标志位(写 1 清除)
+143  * @param - base : 要清除的 IO 所在的 GPIO 组。
+144  * @param - pin : 要清除的 GPIO 掩码。
+145  * @return : 无
+146  */
+147 void gpio_clearintflags(GPIO_Type* base, unsigned int pin)
+148 {
+149     base->ISR |= (1 << pin);
+150 }
+```
+在 bsp_gpio.c 文件中首先修改了 gpio_init 函数，在此函数里面添加了中断配置代码。
+另外也新增加了 4 个函数，如下：
+gpio_intconfig：配置 GPIO 的中断功能。
+gpio_enableint：GPIO 中断使能函数。
+gpio_disableint：GPIO 中断禁止函数。
+gpio_clearintflags：GPIO 中断标志位清除函数。
+bsp_gpio.c 文件重点就是增加了一些跟 GPIO 中断有关的函数，都比较简单。
+基本是对GPIO的几个功能寄存器进行配置：
+
+复习：
+
+| 寄存器    | 功能           |
+| --------- | -------------- |
+| DR        | 数据寄存器     |
+| GDIR      | 方向寄存器     |
+| PSR       | 状态寄存器     |
+| ICR1/ICR2 | 中断触发方式   |
+| IMR       | 中断使能       |
+| ISR       | 中断标志位清楚 |
+| EDGE_SEL  | 设置双边沿     |
+
+#### 17.3.5 按键中断驱动文件
+
+本例程的目的是以中断的方式编写 KEY 按键驱动，当按下 KEY 以后触发 GPIO 中断，然后在中断服务函数里面控制蜂鸣器的开关。
+所以接下来就是要编写按键 KEY 对应的UART1_CTS 这个 IO 的中断驱动，在 bsp 文件夹里面新建名为“exit”的文件夹，然后在 bsp/exit里面新建 bsp_exit.c 和 bsp_exit.h 两个文件。
+在 bsp_exit.h 文件中输入如下代码：
+```C
+1 #ifndef _BSP_EXIT_H
+2 #define _BSP_EXIT_H
+3 /***************************************************************
+4 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5 文件名 : bsp_exit.h
+6 作者 : 左忠凯
+7 版本 : V1.0
+8 描述 : 外部中断驱动头文件。
+9 其他 : 配置按键对应的 GPIP 为中断模式
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/4 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14
+15 /* 函数声明 */
+16 void exit_init(void); /* 中断初始化 */
+17 void gpio1_io18_irqhandler(void); /* 中断处理函数 */
+18
+19 #endif
+```
+接下来在 bsp_exit.c 里面输入如下内容：
+```C
+1 #include "bsp_exit.h"//本文件的头文件
+2 #include "bsp_gpio.h"//配置key的IO
+3 #include "bsp_int.h"//配置中断
+4 #include "bsp_delay.h"//消抖
+5 #include "bsp_beep.h"//中断服务函数中开启蜂鸣器
+6 
+7 /*
+8  * @description : 初始化外部中断
+9  * @param : 无
+10 * @return : 无
+11 */
+12 void exit_init(void)
+13 {
+14    gpio_pin_config_t key_config;
+15
+16    /* 1、设置 IO 复用 */
+17    IOMUXC_SetPinMux(IOMUXC_UART1_CTS_B_GPIO1_IO18,0);
+18    IOMUXC_SetPinConfig(IOMUXC_UART1_CTS_B_GPIO1_IO18,0xF080);
+19
+20    /* 2、初始化 GPIO 为中断模式 */
+21    key_config.direction = kGPIO_DigitalInput;
+22    key_config.interruptMode = kGPIO_IntFallingEdge;
+23    key_config.outputLogic = 1;
+24    gpio_init(GPIO1, 18, &key_config);
+25    /* 3、使能 GIC 中断、注册中断服务函数、使能 GPIO 中断 */
+26    GIC_EnableIRQ(GPIO1_Combined_16_31_IRQn);
+27    system_register_irqhandler(GPIO1_Combined_16_31_IRQn,(system_irq_handler_t)gpio1_io18_irqhandler,NULL);
+28    gpio_enableint(GPIO1, 18);
+29 }
+30
+31 /*
+32  * @description : GPIO1_IO18 最终的中断处理函数
+33  * @param : 无
+34  * @return : 无
+35  */
+36 void gpio1_io18_irqhandler(void)
+37 {
+38    static unsigned char state = 0;
+39
+40  /*
+41   *采用延时消抖，中断服务函数中禁止使用延时函数！因为中断服务需要
+42   *快进快出！！这里为了演示所以采用了延时函数进行消抖，后面我们会讲解
+43   *定时器中断消抖法！！！
+44   */
+45
+46    delay(10);
+47    if(gpio_pinread(GPIO1, 18) == 0) /* 按键按下了 */
+48    {
+49      state = !state;
+50      beep_switch(state);
+51    }
+52
+53    gpio_clearintflags(GPIO1, 18); /* 清除中断标志位 */
+54 }
+```
+bsp_exit.c 文件只有两个函数 exit_init 和 gpio1_io18_irqhandler，exit_init 是中断初始化函数。
+第 14~24 行都是初始化 KEY 所使用的 UART1_CTS 这个 IO，设置其复用为 GPIO1_IO18，然后配置 GPIO1_IO18 为下降沿触发中断。
+
+重点是第 26~28 行，在 26 行调用函数 GIC_EnableIRQ来使能 GPIO_IO18 所对应的中断总开关，I.MX6U 中 GPIO1_IO16~IO31 这 16 个 IO 共用 ID99。
+27 行调用函数 system_register_irqhandler 注册 ID99 所对应的中断处理函数，GPIO1_IO16~IO31这 16 个 IO 共用一个中断处理函数，至于具体是哪个 IO 引起的中断，那就需要在中断处理函数(自行注册的函数)中判断了。
+28 行通过函数 gpio_enableint 使能 GPIO1_IO18 这个 IO 对应的中断。
+
+函数 gpio1_io18_irqhandler 就是 27 行注册的中断处理函数，也就是我们学习 STM32 的时候某个 GPIO 对应的中断服务函数。
+在此函数里面编写中断处理代码，第 50 行就是蜂鸣器开关控制代码，也就是我们本试验的目的。当中断处理完成以后肯定要清除中断标志位，第 53行调用函数 gpio_clearintflags 来清除 GPIO1_IO18 的中断标志位。
+
+总结：
+使用中断，首先编写start.S确定中断向量表，由硬件捕捉中断信号，然后到指定地址执行指令。
+执行汇编中的中断处理程序如Reset和IRQ中断的默认执行动作，（保存现场等）。
+然后调用system_irqhandler函数，在Int模块中，配置默认的中断处理函数以及中断注册函数。
+在GPIO中，利用GPIO的功能寄存器，配置中断的IO使能，标志位等功能，完成中断的配置。
+
+使用中断时，如Key中：
+先初始化IO为GPIO格式，然后配置GPIO的中断模式，包括输入方向，中断触发方式等。
+然后调用GIC_EnableIRQ(GPIO1_Combined_16_31_IRQn);使能具体的中断IO开关
+system_register_irqhandler(GPIO1_Combined_16_31_IRQn,(system_irq_handler_t)gpio1_io18_irqhandler,NULL);注册服务函数
+最后在gpio_enableint(GPIO1, 18);在GPIO中使能中断即可。
+
+中断的使能有三部分：
+第一个是进入IRQ模式，CSPR寄存器即可
+第二个是ID1020的开关，在GIC_Enable中使能
+最后就是GPIO的中断使能
+(中断优先级等有关中断设置均在GIC控制器中，GIC基地址，中断号等设计CPU在CP15中获取)
+本次实验不涉及优先级
+
+#### 17.3.6 main.c编写
+
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_exit.h"
+8
+9 /*
+10 * @description : main 函数
+11 * @param : 无
+12 * @return : 无
+13 */
+14 int main(void)
+15 {
+16    unsigned char state = OFF;
+17
+18    int_init(); /* 初始化中断(一定要最先调用！) */ //中断配置
+19    imx6u_clkinit(); /* 初始化系统时钟 */ //主频
+20    clk_enable(); /* 使能所有的时钟 */ //时钟使能
+21    led_init(); /* 初始化 led */ 
+22    beep_init(); /* 初始化 beep */
+23    key_init(); /* 初始化 key */
+24    exit_init(); /* 初始化按键中断 */ //按键中断
+25
+26    while(1)
+27    {
+28        state = !state;
+29        led_switch(LED0, state);
+30        delay(500);
+31    }
+32
+33    return 0;
+34 }
+```
+补充：
+
+    以下是 CCGR0 到 CCGR6 控制的时钟模块（这些控制项是基于 i.MX6ULL 的硬件手册，具体内容会根据不同型号的 i.MX6 可能有所差异）：
+
+    1. CCM->CCGR0
+    控制以下外设时钟使能：
+
+    AXI Bus：AXI 总线时钟
+    APB1：APB1 总线时钟
+    APB2：APB2 总线时钟
+    GPU：图形处理单元（GPU）时钟
+    VPU：视频处理单元（VPU）时钟
+    SATA：SATA 接口时钟
+    USB OTG 1：USB OTG 1 接口时钟
+    USB OTG 2：USB OTG 2 接口时钟
+
+    2. CCM->CCGR1
+    控制以下外设时钟使能：
+
+    Display：显示接口时钟
+    CSI：摄像头接口时钟
+    IPU：图像处理单元（IPU）时钟
+    HDMI：HDMI 输出时钟
+    I2C：I2C 总线时钟
+    PWM：脉宽调制（PWM）时钟
+    GPT：通用定时器时钟
+    UART：串口时钟
+
+    3. CCM->CCGR2
+    控制以下外设时钟使能：
+
+    CAN：CAN 总线时钟
+    ADC：模拟数字转换器（ADC）时钟
+    SPBA：SPBA 总线时钟
+    SPI：SPI 总线时钟
+    UART：更多的 UART 接口时钟
+    FlexPWM：更多的 PWM 控制时钟
+    Ethernet：以太网时钟
+
+    4. CCM->CCGR3
+    控制以下外设时钟使能：
+
+    LPSPI：低功耗 SPI 总线时钟
+    LPUART：低功耗 UART 时钟
+    I2S：I2S 总线时钟
+    SPDIF：SPDIF 音频传输时钟
+
+    5. CCM->CCGR4
+    控制以下外设时钟使能：
+
+    LCDC：LCD 控制器时钟
+    eMMC：eMMC 存储时钟
+    SDMA：直接存储器访问（DMA）时钟
+
+    6. CCM->CCGR5
+    控制以下外设时钟使能：
+
+    FLEXIO：FLEXIO 总线时钟
+    GPT：更多的定时器时钟
+
+    7. CCM->CCGR6
+    控制以下外设时钟使能：
+
+    I2C、SPI、UART 等其他外设时钟
+
+内核时钟是在BootROM中初始化的
+
+### 17.4 编译下载验证
+
+#### 17.4.1 编写 Makefile 和链接脚本
+
+在第十六章实验的 Makefile 基础上修改变量 TARGET 为 int
+在变量 INCDIRS 和 SRCDIRS中追加“bsp/exit”和 bsp/int
+
+lds不变
+
+#### 17.4.2 验证下载
+
+下载SD卡验证
+
+## 第十八章 EPIT定时器实验
+
+定时器是最常用的外设，常常需要使用定时器来完成精准的定时功能，I.MX6U 提供了多种硬件定时器，有些定时器功能非常强大。
+本章我们从最基本的 **EPIT 定时器** 开始，学习如何配置 EPIT 定时器，使其按照给定的时间，周期性的产生定时器中断，在定时器中断里面我们可以做其它的处理，比如翻转 LED 灯。
