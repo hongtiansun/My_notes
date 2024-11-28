@@ -7393,4 +7393,247 @@ lds保持不变
 
 #### 18.4.2 下载验证
 
-验证
+验证即可
+
+## 第十九章 定时器按键消抖实验
+
+在第十五章和第十七章实验中都用到了按键，用到按键就要处理因为机械结构带来的按键抖动问题，也就是按键消抖。前面的实验中都是直接使用了延时函数来实现消抖，因为简单，但是直接用延时函数来实现消抖会浪费 CPU 性能，因为在延时函数里面 CPU 什么都做不了。
+如果按键使用中断的话更不能在中断里面使用延时函数，因为中断服务函数要快进快出！
+本章我们学习如何使用定时器来实现按键消抖，使用定时器既可以实现按键消抖，而且也不会浪费CPU 性能，这个也是 Linux 驱动里面按键消抖的做法。
+
+### 19.1 定时器按键消抖简介
+
+按键消抖的原理在第十五章已经详细的讲解了，其实就是在按键按下以后延时一段时间再去读取按键值，如果此时按键值还有效那就表示这是一次有效的按键，中间的延时就是消抖的。
+但是这有一个缺点，就是延时函数会浪费 CPU 性能，因为延时函数就是空跑。
+如果按键是用中断方式实现的，那就更不能在中断服务函数里面使用延时函数，因为中断服务函数最基本的要求就是快进快出！
+上一章我们学习了 EPIT 定时器，定时器设置好定时时间，然后 CPU 就可以做其他事情去了，定时时间到了以后就会触发中断，然后在中断中做相应的处理即可。
+因而，我们可以采用下面的设计理念。
+
+设计：
+我们可以借助定时器来实现消抖，按键采用中断驱动方式，当按键按下以后触发按键中断，在按键中断中开启一个定时器，定时周期为 10ms，当定时时间到了以后就会触发定时器中断，最后在定时器中断处理函数中读取按键的值，如果按键值还是按下状态那就表示这是一次有效的按键。
+
+定时器按键消抖示意图：
+![alt](./images/Snipaste_2024-11-28_19-46-37.png)
+
+在图中 t1~t3 这一段时间就是按键抖动，是需要消除的。
+设置按键为下降沿触发，因此会在 t1、t2 和 t3 这三个时刻会触发按键中断，每次进入中断处理函数都会重新开器定时器中断，所以会在 t1、t2 和 t3 这三个时刻开器定时器中断。
+但是 t1~t2 和 t2~t3 这两个时间段是小于我们设置的定时器中断周期(也就是消抖时间，比如 10ms)，所以虽然 t1 开启了定时器，但是定时器定时时间还没到呢 t2 时刻就重置了定时器，最终只有 t3 时刻开启的定时器能完整的完成整个定时周期并触发中断。
+我们就可以在中断处理函数里面做按键处理了，这就是定时器实现按键防抖的原理，Linux 里面的按键驱动用的就是这个原理！
+
+关于定时器按键消抖的原理就介绍到这里，接下来讲解如何使用 EPIT1 来配合按键 KEY来实现具体的消抖，步骤如下：
+
+1. **配置按键IO中断**
+
+配置按键所使用的 IO，因为要使用到中断驱动按键，所以要配置 IO 的中断模式。
+
+2. **初始化消抖所用定时器**
+
+上面已经讲的很清楚了，消抖要用定时器来完成，所以需要初始化一个定时器，这里使用上一章讲解的 EPIT1 定时器，也算是对 EPIT1 定时器的一次巩固。
+定时器的定时周期为 10ms，也可根据实际情况调整定时周期。
+
+3. **编写中断处理函数**
+
+需要编写两个中断处理函数：按键对应的 GPIO 中断处理函数和 EPIT1 定时器的中断处理函数。
+在按键的中断处理函数中主要用于开启 EPIT1 定时器，EPIT1 的中断处理函数才是重点，按键要做的具体任务都是在定时器 EPIT1 的中断处理函数中完成的，比如控制蜂鸣器打开或关闭。
+
+### 19.2 硬件原理分析
+
+本试验用到的资源如下：
+①、一个 LED 灯 LED0。
+②、定时器 EPTI1。
+③、一个按键 KEY。
+④、一个蜂鸣器。
+本试验效果和第十五章的试验效果一样，按下 KEY 会打开蜂鸣器，再次按下 KEY 就会关闭蜂鸣器。
+LED0 作为系统提示灯不断的闪烁。
+
+### 19.3 实验程序编写
+例程路径为：开发板光盘-> 1、裸机例程-> 11_key_filter。
+
+上一章例程的基础上完成，更改工程名字为“key_filter”，然后在 bsp 文件夹下创建名为“keyfilter”的文件夹，然后在 bsp/keyfilter 中新建 bsp_keyfilter.c 和 bsp_keyfilter.h 这两个文件。
+
+```C
+1 #ifndef _BSP_KEYFILTER_H
+2 #define _BSP_KEYFILTER_H
+3 /***************************************************************
+4 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5 文件名 : bsp_keyfilter.h
+6 作者 : 左忠凯
+7 版本 : V1.0
+8 描述 : 定时器按键消抖驱动头文件。
+9 其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/5 左忠凯创建
+12 ***************************************************************/
+13
+14 /* 函数声明 */
+15 void filterkey_init(void);
+16 void filtertimer_init(unsigned int value);
+17 void filtertimer_stop(void);
+18 void filtertimer_restart(unsigned int value);
+19 void filtertimer_irqhandler(void);
+20 void gpio1_16_31_irqhandler(void);
+21
+22 #endif
+```
+
+```C
+1 #include "bsp_key.h"
+2 #include "bsp_gpio.h"
+3 #include "bsp_int.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_keyfilter.h"
+6 
+7 /*
+8  * @description : 按键初始化
+9  * @param : 无
+10 * @return : 无
+11 */
+12 void filterkey_init(void)
+13 {
+14      gpio_pin_config_t key_config;
+15
+16      /* 1、初始化 IO */
+17      IOMUXC_SetPinMux(IOMUXC_UART1_CTS_B_GPIO1_IO18, 0);
+18      IOMUXC_SetPinConfig(IOMUXC_UART1_CTS_B_GPIO1_IO18, 0xF080);
+19
+20      /* 2、初始化 GPIO 为中断 */
+21      key_config.direction = kGPIO_DigitalInput;
+22      key_config.interruptMode = kGPIO_IntFallingEdge;
+23      key_config.outputLogic = 1;
+24      gpio_init(GPIO1, 18, &key_config);
+25
+26      /* 3、 使能 GPIO 中断，并且注册中断处理函数 */
+27      GIC_EnableIRQ(GPIO1_Combined_16_31_IRQn);
+28      system_register_irqhandler(GPIO1_Combined_16_31_IRQn,(system_irq_handler_t)gpio1_16_31_irqhandler,NULL);
+29
+30      gpio_enableint(GPIO1, 18); /* 使能 GPIO1_IO18 的中断功能 */
+31      filtertimer_init(66000000/100); /* 初始化定时器,10ms */
+32 }
+33
+34 /*
+35  * @description : 初始化用于消抖的定时器，默认关闭定时器
+36  * @param - value : 定时器 EPIT 计数值
+37  * @return : 无
+38  */
+39 void filtertimer_init(unsigned int value)
+40 {
+41      EPIT1->CR = 0; /* 先清零 */
+42      EPIT1->CR = (1<<24 | 1<<3 | 1<<2 | 1<<1);
+43      EPIT1->LR = value; /* 计数值 */
+44      EPIT1->CMPR = 0; /* 比较寄存器为 0 */
+45
+46      /* 使能 EPIT1 中断并注册中断处理函数*/
+47      GIC_EnableIRQ(EPIT1_IRQn);
+48      system_register_irqhandler(EPIT1_IRQn,(system_irq_handler_t)filtertimer_irqhandler,NULL);
+49 }
+50
+51 /*
+52  * @description : 关闭定时器
+53  * @param : 无
+54  * @return : 无
+55  */
+56 void filtertimer_stop(void)
+57 {
+58      EPIT1->CR &= ~(1<<0); /* 关闭定时器 */
+59 }
+60
+61 /*
+62  * @description : 重启定时器
+63  * @param – value : 定时器 EPIT 计数值
+64  * @return : 无
+65  */
+66 void filtertimer_restart(unsigned int value)
+67 {
+68      EPIT1->CR &= ~(1<<0); /* 先关闭定时器 */
+69      EPIT1->LR = value; /* 计数值 */
+70      EPIT1->CR |= (1<<0); /* 打开定时器 */
+71 }
+72
+73 /*
+74  * @description : 定时器中断处理函数
+75  * @param : 无
+76  * @return : 无
+77  */
+78 void filtertimer_irqhandler(void)
+79 {
+80      static unsigned char state = OFF;
+81
+82      if(EPIT1->SR & (1<<0)) /* 判断比较事件是否发生 */
+83      {
+84          filtertimer_stop(); /* 关闭定时器 */
+85          if(gpio_pinread(GPIO1, 18) == 0) /* KEY0 按下 */
+86          {
+87              state = !state;
+88              beep_switch(state); /* 反转蜂鸣器 */
+89          }
+90      }
+91      EPIT1->SR |= 1<<0; /* 清除中断标志位 */
+92 }
+93 
+94 /*
+95  * @description : GPIO 中断处理函数
+96  * @param : 无
+97  * @return : 无
+98  */
+99 void gpio1_16_31_irqhandler(void)
+100 {
+101     filtertimer_restart(66000000/100); /* 开启定时器 */
+102     gpio_clearintflags(GPIO1, 18); /* 清除中断标志位 */
+103 }
+```
+文件 bsp_keyfilter.c 一共有 6 个函数，这 6 个函数其实都很简单。filterkey_init 是本试验的初始化函数，此函数首先初始化了 KEY 所使用的 UART1_CTS 这个 IO，设置这个 IO 的中断模式，并且注册中断处理函数，最后调用函数 filtertimer_init 初始化定时器 EPIT1 定时周期为10ms。
+函数 filtertimer_init 是定时器 EPIT1 的初始化函数，内容基本和上一章实验的 EPIT1 初始化函数一样。
+函数 filtertimer_stop 和 filtertimer_restart 分别是 EPIT1 的关闭和重启函数。
+filtertimer_irqhandler 是 EPTI1 的中断处理函数，此函数里面就是按键要做的工作，在本例程里面就是开启或者关闭蜂鸣器。
+函数 gpio1_16_31_irqhandler 是 GPIO1_IO18 的中断处理函数，此函数只有一个工作，那就是重启定时器 EPIT1。
+
+main.c文件：
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_keyfilter.h"
+8
+9 /*
+10 * @description : main 函数
+11 * @param : 无
+12 * @return : 无
+13 */
+14 int main(void)
+15 {
+16      unsigned char state = OFF;
+17
+18      int_init(); /* 初始化中断(一定要最先调用！) */
+19      imx6u_clkinit(); /* 初始化系统时钟 */
+20      clk_enable(); /* 使能所有的时钟 */
+21      led_init(); /* 初始化 led */
+22      beep_init(); /* 初始化 beep */
+23      filterkey_init(); /* 带有消抖功能的按键 */
+24
+25      while(1)
+26      {
+27          state = !state;
+28          led_switch(LED0, state);
+29          delay(500);
+30      }
+31
+32      return 0;
+33 }
+```
+
+main函数只需要进行LED0的反转即可
+
+### 19.4 编译下载
+
+修改 Makefile 中的 TARGET 为 keyfilter，在 INCDIRS 和 SRCDIRS 中加入“bsp/keyfilter”
+
+lds不变
+
+下载到SD中进行验证即可。
+
+验证成功！
+
+## 第二十章 高精度延迟实验
