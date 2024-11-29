@@ -7637,3 +7637,1456 @@ lds不变
 验证成功！
 
 ## 第二十章 高精度延迟实验
+
+延时函数是很常用的 API 函数，在前面的实验中我们使用循环来实现延时函数，但是使用循环来实现的延时函数不准确，误差会很大。
+虽然使用到延时函数的地方精度要求都不会很严格(要求严格的话就使用硬件定时器了)，但是延时函数肯定是越精确越好，这样延时函数就可以使用在某些对时序要求严格的场合。
+本章我们就来学习一下如何使用硬件定时器来实现高精度延时。
+
+### 20.1 高精度延时简介
+
+#### 20.1.1 GPT定时器简介
+
+学过 STM32 的同学应该知道，在使用 STM32 的时候可以使用 SYSTICK 来实现高精度延时。
+I.MX6U 没有 SYSTICK 定时器，但是 I.MX6U 有其他定时器啊，比如第十八章讲解的 EPIT定时器。
+本章我们使用 I.MX6U 的 GPT 定时器来实现高精度延时，顺便学习一下 GPT 定时器，GPT 定时器全称为 General Purpose Timer。
+
+补充：SYSTICK时钟 @freertos定时器
+
+    STM32 的 SysTick 定时器是一个内置于 Cortex-M 内核中的 24 位向下递减计数器。
+    它主要用于产生系统时基，维持操作系统的心跳，或者用于延时操作。以下是一些关键点：
+    1. **寄存器**：
+       - **CTRL**：控制和状态寄存器，用于启用/禁用定时器，选择时钟源，和使能中断。
+       - **LOAD**：重装载寄存器，设置计数器的初始值。
+       - **VAL**：当前值寄存器，显示当前计数值。
+       - **CALIB**：校准值寄存器，提供参考值。
+
+    2. **时钟源**：
+       - SysTick 的时钟源可以是 AHB 时钟（HCLK）或 HCLK 的 1/8。
+
+    3. **配置函数**：
+       - `SysTick_Config(uint32_t ticks)`：初始化并启动 SysTick 计数器及其中断。`ticks` 参数设置重装载寄存器的值，最大值为 16777216¹²。
+
+    4. **使用场景**：
+       - SysTick 常用于操作系统的心跳时钟，例如在 UCOS 中用作心跳时钟¹²。
+
+    你可以通过调用 `SysTick_Config()` 函数来快速配置和启动 SysTick 定时器。
+    这个函数会自动设置重装载寄存器的值，并启用中断和计数器。
+
+GPT 定时器是一个 32 位向上定时器(也就是从 0X00000000 开始向上递增计数)，GPT 定时器也可以跟一个值进行比较，当计数器值和这个值相等的话就发生比较事件，产生比较中断。
+GPT 定时器有一个 12 位的分频器，可以对 GPT 定时器的时钟源进行分频，GPT 定时器特性如下：
+
+①、一个可选时钟源的 32 位**向上计数器**。
+②、两个**输入捕获**通道，可以设置触发方式。
+③、三个**输出比较**通道，可以设置输出模式。
+④、可以生成捕获中断、比较中断和溢出中断。
+⑤、计数器可以运行在重新启动(restart)或(自由运行)free-run 模式。
+
+GPT定时器可选时钟源如下图：
+
+![alt](./images/Snipaste_2024-11-29_13-38-38.png)
+
+从图可以看出一共有五个时钟源，分别为：ipg_clk_24M、GPT_CLK(外部时钟)、ipg_clk、ipg_clk_32k 和 ipg_clk_highfreq。
+本例程选择 ipg_clk 为 GPT 的时钟源，ipg_clk=66MHz。
+
+GPT定时器结构：
+
+![alt](./images/Snipaste_2024-11-29_13-40-52.png)
+
+各部分解释：
+
+①、此部分为 GPT 定时器的时钟源，前面已经说过了，本章例程选择 ipg_clk 作为 GPT 定时器时钟源。
+
+②、此部分为 12 位分频器，对时钟源进行分频处理，可设置 0~4095，分别对应 1~4096 分频。
+
+③、经过分频的时钟源进入到 GPT 定时器内部 32 位计数器。
+
+④和⑤、这两部分是 GPT 的两路输入捕获通道，本章不讲解 GPT 定时器的输入捕获。
+
+⑥、此部分为输出比较寄存器，一共有三路输出比较，因此有三个输出比较寄存器，输出比较寄存器是 32 位的。
+
+⑦、此部分位输出比较中断，三路输出比较中断，当计数器里面的值和输出比较寄存器里面的比较值相等就会触发输出比较中断。
+
+GPT 定时器有两种工作模式：重新启动(restart)模式和自由运行(free-run)模式，这两个工作模式的区别如下：
+
+**重新启动(restart)模式**：当 GPTx_CR(x=1，2)寄存器的 FRR 位清零的时候 GPT 工作在此模式。
+在此模式下，当计数值和比较寄存器中的值相等的话计数值就会清零，然后重新从
+0X00000000 开始向上计数，**只有比较通道 1 才有此模式！**向比较通道 1 的比较寄存器写入任何数据都会复位 GPT 计数器。
+对于其他两路比较通道（通道 2 和 3），当发生比较事件以后不会复位计数器。
+
+**自由运行(free-run)模式**：当 GPTx_CR(x=1，2)寄存器的 FRR 位置 1 时候 GPT 工作在此模式下，此模式适用于所有三个比较通道，当比较事件发生以后并不会复位计数器，而是继续计数，直到计数值为 0XFFFFFFFF，然后重新回滚到 0X00000000。
+
+接下来看GPT定时器的寄存器配置：
+
+第一个就是 GPT 的配置寄存器 GPTx_CR，此寄存器的结构如图所示：
+
+![alt](./images/Snipaste_2024-11-29_13-50-40.png)
+
+几个重要位配置如下：
+
+**SWR(bit15)**：复位 GPT 定时器，向此位写 1 就可以复位 GPT 定时器，当 GPT 复位完成以后此为会自动清零。
+
+**FRR(bit9)**：运行模式选择，当此位为 0 的时候比较通道 1 工作在重新启动(restart)模式。
+当此位为 1 的时候所有的三个比较通道均工作在自由运行模式(free-run)。
+
+**CLKSRC(bit8:6)**：GPT 定时器时钟源选择位，为 0 的时候关闭时钟源；
+为 1 的时候选择ipg_clk 作为时钟源；
+为 2 的时候选择 ipg_clk_highfreq 为时钟源；
+为 3 的时候选择外部时钟为时钟源；
+为 4 的时候选择 ipg_clk_32k 为时钟源；
+为 5 的时候选择 ip_clk_24M 为时钟源。
+本章例程选择 ipg_clk 作为 GPT 定时器的时钟源，因此此位设置位 1(0b001)。
+
+**ENMOD(bit1)**：GPT 使能模式，此位为 0 的时候如果关闭 GPT 定时器，计数器寄存器保存定时器关闭时候的计数值。
+此位为 1 的时候如果关闭 GPT 定时器，计数器寄存器就会清零。
+
+**EN(bit)**：GPT 使能位，为 1 的时候使能 GPT 定时器，为 0 的时候关闭 GPT 定时器。
+
+接下来看一下 GPT 定时器的分频寄存器 GPTx_PR，此寄存器结构如图
+![alt](./images/Snipaste_2024-11-29_13-54-26.png)
+
+寄存器 GPTx_PR 我们用到的重要位就一个：PRESCALER(bit11:0)，这就是 12 位分频值，可设置 0~4095，分别对应 1~4096 分频。
+
+接下来看一下 GPT 定时器的状态寄存器 GPTx_SR，此寄存器结构如图:
+
+![alt](./images/Snipaste_2024-11-29_13-55-19.png)
+
+寄存器 GPTx_SR 重要的位如下：
+
+**ROV(bit5)**：回滚标志位，当计数值从 0XFFFFFFFF 回滚到 0X00000000 的时候此位置 1。
+
+**IF2~IF1(bit4:3)**：输入捕获标志位，当输入捕获事件发生以后此位置 1，一共有两路输入捕获通道。
+如果使用输入捕获中断的话需要在中断处理函数中清除此位。
+
+**OF3~OF1(bit2:0)**：输出比较中断标志位，当输出比较事件发生以后此位置 1，一共有三路输出比较通道。
+如果使用输出比较中断的话需要在中断处理函数中清除此位。
+
+接着看一下 GPT 定时器的计数寄存器 GPTx_CNT，这个寄存器保存着 GPT 定时器的当前计数值。
+
+最后看一下 GPT 定时器的输出比较寄存器 GPTx_OCR，每个输出比较通道对应一个
+输出比较寄存器，因此一个 GPT 定时器有三个 OCR 寄存器，它们的作都是相同的。
+以输出比较通道 1 为例，其输出比较寄存器为 GPTx_OCR1，这是一个 32 位寄存器，用于存放 32 位的比较值。
+当计数器值和寄存器 GPTx_OCR1 中的值相等就会产生比较事件，如果使能了比较中断的话就会触发相应的中断。
+
+关于 GPT 的寄存器就介绍到这里，关于这些寄存器详细的描述，请参考《I.MX6ULL 参考手册》第 1432 页的 30.6 小节。
+
+#### 20.1.2 定时器实现高精度延时原理
+
+高精度延时函数的实现肯定是要借助硬件定时器，前面说了本章实验使用 GPT 定时器来实现高精度延时。
+如果设置 GPT 定时器的时钟源为 ipg_clk=66MHz，设置 66 分频，那么进入 GPT定时器的最终时钟频率就是 66/66=1MHz，周期为 1us。
+GPT 的计数器每计一个数就表示“过去”了 1us。
+如果计 10 个数就表示“过去”了 10us。
+通过读取寄存器 GPTx_CNT 中的值就知道计了个数，比如现在要延时 100us，那么进入延时函数以后纪录下寄存器 GPTx_CNT 中的值为 200，当 GPTx_CNT 中的值为 300 的时候就表示 100us 过去了，也就是延时结束。
+GPTx_CNT 是个32 位寄存器，如果时钟为 1MHz 的话，GPTx_CNT 最多可以实现 0XFFFFFFFFus=4294967295us≈4294s≈72min。
+也就是说 72 分钟以后 GPTx_CNT 寄存器就会回滚到 0X00000000，也就是溢出，所以需要在延时函数中要处理溢出的情况。
+关于定时器实现高精度延时的原理就讲解到这里，原理还是很简单的，高精度延时的实现步骤如下：
+
+1. **设置GPT1定时器**
+
+首先设置 GPT1_CR 寄存器的 SWR(bit15)位来复位寄存器 GPT1。复位完成以后设置寄存器 GPT1_CR 寄存器的 CLKSRC(bit8:6)位，选择 GPT1 的时钟源为 ipg_clk。
+设置定时器 GPT1的工作模式。
+
+2. **设置GPT1的分频值**
+
+设置寄存器 GPT1_PR 寄存器的 PRESCALAR(bit111:0)位，设置分频值。
+
+3. **设置GPT1的比较值**
+
+如果要使用 GPT1 的输出比较中断，那么 GPT1 的输出比较寄存器 GPT1_OCR1 的值可以根据所需的中断时间来设置。
+本章例程不使用比较输出中断，所以将 GPT1_OCR1 设置为最大值，即：0XFFFFFFFF。
+
+4. **使能GPT定时器**
+
+设置好 GPT1 定时器以后就可以使能了，设置 GPT1_CR 的 EN(bit0)位为 1 来使能 GPT1 定时器。
+
+5. **编写延时函数**
+
+GPT1定时器已经开始运行了，可以根据前面介绍的高精度延时函数原理来编写延时函数，针对 us 和 ms 延时分别编写两个延时函数。
+
+### 20.2 硬件原理图
+
+本试验用到的资源如下：
+①、一个 LED 灯：LED0。
+②、定时器 GPT1。
+本实验通过高精度延时函数来控制 LED0 的闪烁，可以通过示波器来观察 LED0 的控制 IO输出波形，通过波形的频率或者周期来判断延时函数精度是否正常。
+
+### 20.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 12_highpreci_delay。
+
+本章实验在上一章例程的基础上完成，更改工程名字为“delay”，直接修改 bsp_delay.c 和 bsp_delay.h 这两个文件，将 bsp_delay.h 文件改为如下所示内容：
+
+```C
+1 #ifndef __BSP_DELAY_H
+2 #define __BSP_DELAY_H
+3  /***************************************************************
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5  文件名 : bsp_delay.h
+6  作者 : 左忠凯
+7  版本 : V1.0
+8  描述 : 延时头文件。
+9  其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/4 左忠凯创建
+12
+13 V2.0 2019/1/15 左忠凯修改
+14 添加了一些函数声明。
+15 ***************************************************************/
+16 #include "imx6ul.h"
+17
+18 /* 函数声明 */
+19 void delay_init(void);
+20 void delayus(unsigned int usdelay);
+21 void delayms(unsigned int msdelay);
+22 void delay(volatile unsigned int n);
+23 void gpt1_irqhandler(void);
+24
+25 #endif
+```
+
+```C
+1 #include "bsp_delay.h"
+2
+3 /*
+4  * @description : 延时有关硬件初始化,主要是 GPT 定时器
+5                   GPT 定时器时钟源选择 ipg_clk=66Mhz
+6  * @param : 无
+7  * @return : 无
+8  */
+9  void delay_init(void)
+10 {
+11      GPT1->CR = 0; /* 清零 */
+12      GPT1->CR = 1 << 15; /* bit15 置 1 进入软复位 定时器清零*/
+13      while((GPT1->CR >> 15) & 0x01); /*等待复位完成 */
+14
+15      /*
+16       * GPT 的 CR 寄存器,GPT 通用设置
+17       * bit22:20 000 输出比较 1 的输出功能关闭，也就是对应的引脚没反应
+18       * bit9: 0 Restart 模式,当 CNT 等于 OCR1 的时候就产生中断
+19       * bit8:6 001 GPT 时钟源选择 ipg_clk=66Mhz
+20       */
+21      GPT1->CR = (1<<6); //时钟源
+22
+23      /*
+24       * GPT 的 PR 寄存器，GPT 的分频设置
+25       * bit11:0 设置分频值，设置为 0 表示 1 分频，
+26       * 以此类推，最大可以设置为 0XFFF，也就是最大 4096 分频
+27       */
+28      GPT1->PR = 65; /* 66 分频，GPT1 时钟为 66M/(65+1)=1MHz */
+29
+30      /*
+31       * GPT 的 OCR1 寄存器，GPT 的输出比较 1 比较计数值，
+32       * GPT 的时钟为 1Mz，那么计数器每计一个值就是就是 1us。
+33       * 为了实现较大的计数，我们将比较值设置为最大的 0XFFFFFFFF,
+34       * 这样一次计满就是：0XFFFFFFFFus = 4294967296us = 4295s = 71.5min
+35       * 也就是说一次计满最多 71.5 分钟，存在溢出。
+36       */
+37      GPT1->OCR[0] = 0XFFFFFFFF;
+38      GPT1->CR |= 1<<0; /* 使能 GPT1 */
+39
+40      /* 以下屏蔽的代码是 GPT 定时器中断代码，
+41       * 如果想学习 GPT 定时器的话可以参考以下代码。
+42       */
+43      #if 0
+44      /*
+45       * GPT 的 PR 寄存器，GPT 的分频设置
+46       * bit11:0 设置分频值，设置为 0 表示 1 分频，
+47       * 以此类推，最大可以设置为 0XFFF，也就是最大 4096 分频
+48       */
+49
+50      GPT1->PR = 65; /* 66 分频，GPT1 时钟为 66M/(65+1)=1MHz */
+51      /*
+52       * GPT 的 OCR1 寄存器，GPT 的输出比较 1 比较计数值，
+53       * 当 GPT 的计数值等于 OCR1 里面值时候，输出比较 1 就会发生中断
+54       * 这里定时 500ms 产生中断，因此就应该为 1000000/2=500000;
+55       */
+56      GPT1->OCR[0] = 500000;
+57
+58      /*
+59       * GPT 的 IR 寄存器，使能通道 1 的比较中断
+60       * bit0： 0 使能输出比较中断
+61       */
+62       GPT1->IR |= 1 << 0;
+63       
+64       /*
+65       * 使能 GIC 里面相应的中断，并且注册中断处理函数
+66       */
+67       GIC_EnableIRQ(GPT1_IRQn); /* 使能 GIC 中对应的中断 */
+68       system_register_irqhandler(GPT1_IRQn,(system_irq_handler_t)gpt1_irqhandler,NULL);
+69 #endif
+70
+71 }
+72
+73 #if 0
+74 /* 中断处理函数 */
+75 void gpt1_irqhandler(void)
+76 {
+77      static unsigned char state = 0;
+78      state = !state;
+79      /*
+80       * GPT 的 SR 寄存器，状态寄存器
+81       * bit2： 1 输出比较 1 发生中断
+82       */
+83      if(GPT1->SR & (1<<0))
+84      {
+85          led_switch(LED2, state);
+86      }
+87      GPT1->SR |= 1<<0; /* 清除中断标志位 写入1*/
+88 }
+89 #endif
+90
+91 /*
+92  * @description : 微秒(us)级延时
+93  * @param – usdelay : 需要延时的 us 数,最大延时 0XFFFFFFFFus
+94  * @return : 无
+95  */
+96 void delayus(unsigned int usdelay)
+97 {
+98      unsigned long oldcnt,newcnt;
+99      unsigned long tcntvalue = 0; /* 走过的总时间 */
+100
+101     oldcnt = GPT1->CNT;
+102     while(1)
+103     {
+104         newcnt = GPT1->CNT;
+105         if(newcnt != oldcnt)
+106         {
+107             if(newcnt > oldcnt) /* GPT 是向上计数器,并且没有溢出 */
+108                 tcntvalue += newcnt - oldcnt;
+109             else /* 发生溢出 */
+110                 tcntvalue += 0XFFFFFFFF-oldcnt + newcnt;
+111             oldcnt = newcnt;//记录此循环得到的tcntvalue 下一回合需要累加
+112             if(tcntvalue >= usdelay) /* 延时时间到了 */
+113                 break; /* 跳出 */
+114         }
+115     }
+116 }
+117
+118 /*
+119  * @description : 毫秒(ms)级延时
+120  * @param - msdelay : 需要延时的 ms 数
+121  * @return : 无
+122  */
+123 void delayms(unsigned int msdelay)
+124 {
+125     int i = 0;
+126     for(i=0; i<msdelay; i++)
+127     {
+128         delayus(1000);
+129     }
+130 }
+131
+132 /*
+133  * @description : 短时间延时函数
+134  * @param - n : 要延时循环次数(空操作循环次数，模式延时)
+135  * @return : 无
+136  */
+137 void delay_short(volatile unsigned int n)
+138 {
+139     while(n--){}
+140 }
+141
+142 /*
+143  * @description : 延时函数,在 396Mhz 的主频下
+144  * 延时时间大约为 1ms
+145  * @param - n : 要延时的 ms 数
+146  * @return : 无
+147  */
+148 void delay(volatile unsigned int n)
+149 {
+150     while(n--)
+151     {
+152         delay_short(0x7ff);
+153     }
+154 }
+```
+
+文件 bsp_delay.c 中一共有 5 个函数，分别为：delay_init、delayus、delayms 、delay_short和 delay。
+除了 delay_short 和 delay 以外，其他三个都是新增加的。
+函数 delay_init 是延时初始化函数，主要用于初始化 GPT1 定时器，设置其时钟源、分频值和输出比较寄存器值。
+第 43 到68 行被屏蔽掉的程序是 GPT1 的中断初始化代码，如果要使用 GPT1 的中断功能的话可以参考此部分代码。
+第 73 到 89 行被屏蔽掉的程序是 GPT1 的中断处理函数 gpt1_irqhandler，同样的，如果需要使用 GPT1 中断功能的话可以参考此部分代码。
+
+函数 delayus 和 delayms 就是 us 级和 ms 级的高精度延时函数，函数 delayus 就是按照我们在 20.1.2 小节讲解的高精度延时原理编写的，delayus 函数处理 GPT1 计数器溢出的情况。
+函数delayus 只有一个参数 usdelay，这个参数就是要延时的 us 数。
+delayms 函数很简单，就是对delayus(1000)的多次叠加，此函数也只有一个参数 msdelay，也就是要延时的 ms 数。
+
+修改main.c文件
+
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_keyfilter.h"
+8
+9 /*
+10 * @description : main 函数
+11 * @param : 无
+12 * @return : 无
+13 */
+14 int main(void)
+15 {
+16  unsigned char state = OFF;
+17
+18  int_init(); /* 初始化中断(一定要最先调用！) */
+19  imx6u_clkinit(); /* 初始化系统时钟 */
+20  delay_init(); /* 初始化延时 */
+21  clk_enable(); /* 使能所有的时钟 */
+22  led_init(); /* 初始化 led */
+23  beep_init(); /* 初始化 beep */
+24
+25  while(1)
+26  {
+27      state = !state;
+28      led_switch(LED0, state);
+29      delayms(500);
+30  }
+31
+32  return 0;
+33 }
+```
+main.c 函数很简单，在第 20 行调用 delay_init 函数进行延时初始化，最后在 while 循环中周期性的点亮和熄灭 LED0，调用函数 delayms 来实现延时。
+
+
+### 20.4 编译下载即可
+
+make下载到SD卡进行验证即可
+可以使用示波器进行观察
+
+## 第二十一章 UARST串口通信
+
+不管是单片机开发还是嵌入式 Linux 开发，串口都是最常用到的外设。
+可以通过串口将开发板与电脑相连，然后在电脑上通过串口调试助手来调试程序。
+还有很多的模块，比如蓝牙、GPS、GPRS 等都使用的串口来与主控进行通信的，在嵌入式 Linux 中一般使用串口作为控制台，所以掌握串口是必备的技能。
+本章我们就来学习如何驱动 I.MX6U 上的串口，并使用串口和电脑进行通信。
+
+### 21.1 IMX6ULL串口简介
+
+#### 21.1.1 UART简介
+
+1. **UART通信格式**
+
+串口全称叫做串行接口，通常也叫做 COM 接口，串行接口指的是数据一个一个的顺序传输，通信线路简单。
+使用两条线即可实现双向通信，一条用于发送，一条用于接收。
+串口通信距离远，但是速度相对会低，串口是一种很常用的工业接口。
+I.MX6U 自带的 UART 外设就是串口的一种，UART 全称是 Universal Asynchronous Receiver/Trasmitter，也就是异步串行收发器。
+既然有异步串行收发器，那肯定也有同步串行收发器，学过 STM32 的同学应该知道，STM32除了有 UART 外 ，还有 另 外一 个 叫 做 USART 的 东 西。 
+USART 的全称是 Universal Synchronous/Asynchronous Receiver/Transmitter，也就是同步/异步串行收发器。
+相比 UART 多了一个同步的功能，在硬件上体现出来的就是多了一条时钟线。
+一般 USART 是可以作为 UART使用的，也就是不使用其同步的功能。
+
+UART 作为串口的一种，其工作原理也是将数据一位一位的进行传输，发送和接收各用一条线。
+因此通过 UART 接口与外界相连最少只需要三条线：TXD(发送)、RXD(接收)和 GND(地线)。
+下图就是 UART 的通信格式：
+
+![alt](./images/Snipaste_2024-11-29_15-34-15.png)
+
+**空闲位**：数据线在空闲状态的时候为逻辑“1”状态，也就是高电平，表示没有数据线空闲，没有数据传输。
+**起始位**：当要传输数据的时候先传输一个逻辑“0”，也就是将数据线拉低，表示开始数据传输。
+**数据位**：数据位就是实际要传输的数据，数据位数可选择 5~8 位，我们一般都是按照字节传输数据的，一个字节 8 位，因此数据位通常是 8 位的。
+低位在前，先传输，高位最后传输。
+**奇偶校验位**：这是对数据中“1”的位数进行奇偶校验用的，可以不使用奇偶校验功能。
+**停止位**：数据传输完成标志位，停止位的位数可以选择 1 位、1.5 位或 2 位高电平，一般都选择 1 位停止位。
+
+**波特率**：波特率就是 UART 数据传输的速率，也就是每秒传输的数据位数，一般选择 9600、19200、115200 等。
+
+2. **UART电平标准**
+
+UART 一般的接口电平有 TTL 和 RS-232。
+一般开发板上都有 TXD 和 RXD 这样的引脚，这些引脚低电平表示逻辑 0，高电平表示逻辑 1，这个就是 TTL 电平。
+RS-232 采用差分线，-3~-15V 表示逻辑 1，+3~+15V 表示逻辑 0。
+
+一般图中的接口就是 TTL 电平：
+![alt](./images/Snipaste_2024-11-29_15-38-51.png)
+
+图中的模块就是 USB 转 TTL 模块，TTL 接口部分有 VCC、GND、RXD、TXD、RTS 和 CTS。
+RTS 和 CTS 基本用不到，使用的时候通过杜邦线和其他模块的 TTL 接口相连即可。
+
+RS-232 电平需要 DB9 接口，I.MX6U-ALPHA 开发板上的 COM3(UART3)口就是 RS-232 接口的:
+
+![alt](./images/Snipaste_2024-11-29_15-40-03.png)
+
+由于现在的电脑都没有 DB9 接口了，取而代之的是 USB 接口，所以就催生出了很多 USB转串口 TTL 芯片，比如 CH340、PL2303 等。
+通过这些芯片就可以实现串口 TTL 转 USB。
+I.MX6UALPHA开发板就使用CH340 芯片来完成UART1和电脑之间的连接，只需要一条USB 线即可。
+
+![alt](./images/Snipaste_2024-11-29_15-41-16.png)
+
+#### 21.1.2 IMX6ULL UART介绍
+
+上一小节介绍了 UART 接口，本小节来具体看一下 I.MX6U 的 UART 接口，I.MX6U 一共有 8 个 UART，其主要特性如下：
+
+①、兼容 TIA/EIA-232F 标准，速度最高可到 5Mbit/S。
+②、支持串行 IR 接口，兼容 IrDA，最高可到 115.2Kbit/s。
+③、支持 9 位或者多节点模式(RS-485)。
+④、1 或 2 位停止位。
+⑤、可编程的奇偶校验(奇校验和偶校验)。
+⑥、自动波特率检测(最高支持 115.2Kbit/S)。
+
+I.MX6U 的 UART 功能很多，但是我们本章就只用到其最基本的串口功能，关于 UART 其它功能的介绍请参考《I.MX6ULL 参考手册》第 3561 页的“Chapter 55 Universal Asynchronous Receiver/Transmitter(UART)”章节。
+
+结构示意图：
+![alt](./images/Snipaste_2024-11-29_15-45-42.png)
+
+UART 的时钟源是由寄存器 CCM_CSCDR1 的 UART_CLK_SEL(bit)位来选择的，当为 0 的时候 UART 的时钟源为 pll3_80m(80MHz)，如果为 1 的时候 UART 的时钟源为 osc_clk(24M)，一般选择 pll3_80m 作为 UART 的时钟源。
+寄存器 CCM_CSCDR1 的 UART_CLK_PODF(bit5:0)位是 UART 的时钟分频值，可设置 0~63，分别对应 1~64 分频，一般设置为 1 分频，因此最终进入 UART 的时钟为 80MHz。
+
+接下来看一下 UART 几个重要的寄存器.
+
+首先是UART控制寄存器1，UARTx_UCR1(x=1\~8)
+
+
+![alt](./images/Snipaste_2024-11-29_15-48-00.png)
+
+**ADBR(bit14)**：自动波特率检测使能位，为 0 的时候关闭自动波特率检测，为 1 的时候使能自动波特率检测。
+
+**UARTEN(bit0)**：UART 使能位，为 0 的时候关闭 UART，为 1 的时候使能 UART。
+
+其他介绍可以参见数据手册
+
+接下来看一下 UART 的控制寄存器 2，即：UARTx_UCR2
+
+![alt](./images/Snipaste_2024-11-29_15-49-47.png)
+
+**IRTS(bit14)**：为 0 的时候使用 RTS 引脚功能，为 1 的时候忽略 RTS 引脚。
+
+**PREN(bit8)**：奇偶校验使能位，为 0 的时候关闭奇偶校验，为 1 的时候使能奇偶校验。
+
+**PROE(bit7)**：奇偶校验模式选择位，开启奇偶校验以后此位如果为 0 的话就使用偶校验，此位为 1 的话就使能奇校验。
+
+**STOP(bit6)**：停止位数量，为 0 的话 1 位停止位，为 1 的话 2 位停止位。
+
+**WS(bit5)**：数据位长度，为 0 的时候选择 7 位数据位，为 1 的时候选择 8 位数据位。
+
+**TXEN(bit2)**：发送使能位，为 0 的时候关闭 UART 的发送功能，为 1 的时候打开 UART的发送功能。
+
+**RXEN(bit1)**：接收使能位，为 0 的时候关闭 UART 的接收功能，为 1 的时候打开 UART的接收功能。
+
+**SRST(bit0)**：软件复位，为 0 的是时候软件复位 UART，为 1 的时候表示复位完成。复位完成以后此位会自动置 1，表示复位完成。此位只能写 0，写 1 会被忽略掉。
+
+接下来看一下 UARTx_UCR3 寄存器
+
+![alt](./images/Snipaste_2024-11-29_15-52-06.png)
+
+本章实验就用到了寄存器 UARTx_UCR3 中的位 RXDMUXSEL(bit2)，这个位应该始终为 1，这个在《I.MX6ULL 参考手册》第 3624 页有说明。
+
+接下来看一下寄存器 UARTx_USR2，这个是 UART 的状态寄存器 2，此寄存器结构如图：
+
+![alt](./images/Snipaste_2024-11-29_15-54-36.png)
+
+**TXDC(bit3)**：发送完成标志位，为 1 的时候表明发送缓冲(TxFIFO)和移位寄存器为空，也就是发送完成，向 TxFIFO 写入数据此位就会**自动清零**。
+
+**RDR(bit0)**：数据接收标志位，为 1 的时候表明至少接收到一个数据，从寄存器UARTx_URXD 读取数据接收到的数据以后此位会**自动清零**。
+
+接下来看一下寄存器UARTx_UFCR、UARTx_UBIR 和 UARTx_UBMR ， 寄 存 器UARTx_UFCR 中我们要用到的是位 **RFDIV(bit9:7)**，用来设置参考时钟分频，
+
+| RFDIV(bit9:7) | 分频值 |
+| ------------- | ------ |
+| 000           | 6 分频 |
+| 001           | 5 分频 |
+| 010           | 4 分频 |
+| 011           | 3 分频 |
+| 100           | 2 分频 |
+| 101           | 1 分频 |
+| 110           | 7 分频 |
+| 111           | 保留   |
+
+通过这三个寄存器可以设置 UART 的波特率，波特率的计算公式如下：
+
+```math
+\text{Baud Rate} = \frac{\text{Ref Freq}}{16 \times \left(\frac{\text{UBMR} + 1}{\text{UBIR} + 1}\right)}
+```
+
+Ref Freq：经过分频以后进入 UART 的最终时钟频率。
+UBMR：寄存器 UARTx_UBMR 中的值。
+UBIR：寄存器 UARTx_UBIR 中的值。
+
+通过 UARTx_UFCR 的 RFDIV 位、UARTx_UBMR 和 UARTx_UBIR 这三者的配合即可得到我们想要的波特率。
+比如现在要设置 UART 波特率为 115200，那么可以设置 RFDIV 为5(0b101)，也就是 1 分频，因此 Ref Freq=80MHz。
+设置 UBIR=71，UBMR=3124，根据上面的公式可以得到：
+
+```math
+
+\text{Baud Rate} = \frac{\text{Ref Freq}}{16 \times \left(\frac{\text{UBMR} + 1}{\text{UBIR} + 1}\right)}=\frac{80000000}{16 \times \frac{3124 + 1}{71 + 1}} = 115200
+
+```
+
+最后来看一下寄存器 UARTx_URXD 和 UARTx_UTXD，这两个寄存器分别为 UART 的接收和发送数据寄存器，这两个寄存器的低八位为接收到的和要发送的数据。
+
+读取寄存器UARTx_URXD 即可获取到接收到的数据，如果要通过 UART 发送数据，直接将数据写入到寄存器 UARTx_UTXD 即可。
+
+关于 UART 的寄存器就介绍到这里，关于这些寄存器详细的描述，请参考《I.MX6ULL 参考手册》第 3608 页的 55.15 小节。
+本章我们使用 I.MX6U 的 UART1 来完成开发板与电脑串口调试助手之间串口通信.
+
+UART1配置如下：
+
+1. **设置UART1时钟源**
+
+设置 UART 的时钟源为 pll3_80m，设置寄存器 CCM_CSCDR1 的 UART_CLK_SEL 位为 0即可。
+
+2. **初始化UART1**
+
+初始化 UART1 所使用 IO，设置 UART1 的寄存器 UART1_UCR1~UART1_UCR3，设置内容包括波特率，奇偶校验、停止位、数据位等等。
+
+3. **使能UART1**
+
+UART1 初始化完成以后就可以使能 UART1 了，设置寄存器 UART1_UCR1 的位 UARTEN为 1。
+
+4. **编写收发函数**
+
+编写两个函数用于 UART1 的数据收发操作。
+
+### 21.2 硬件原理分析
+
+本试验用到的资源如下：
+①、一个 LED 灯：LED0。
+②、串口 1。
+I.MX6U-ALPHA 开发板串口 1 硬件原理图如图所示：
+
+核心板输出
+![alt](./images/Snipaste_2024-11-29_16-10-06.png)
+
+pin接口
+![alt](./images/Snipaste_2024-11-29_16-10-47.png)
+
+硬件核心：
+![alt](./images/Snipaste_2024-11-29_16-11-04.png)
+
+在做实验之前需要用 USB 串口线将串口 1 和电脑连接起来，并且还需要设置 JP5 跳线帽，将串口 1 的 RXD、TXD 两个引脚分别与 P116、P117 连接一起
+
+![alt](./images/Snipaste_2024-11-29_16-14-32.png)
+
+硬件连接设置好以后就可以开始软件编写了，本章实验我们初始化好 UART1，然后等待SecureCRT 给开发板发送一个字节的数据，开发板接收到 SecureCRT 发送过来的数据以后在同通过串口 1 发送给 SecureCRT。
+
+补充：本开发板(MiNi)芯片内核有UART硬件，硬件接口出来就是UART_RXD 与UART_TXD 这两个接口是纯纯的串口传输的接口，然后被引导了，Pin引脚上。当然你可以自己找一块USB_TTL芯片，连接引脚进行通信。为了方便，本开发板将USB的power线，继承了一个USB_TTL的芯片，可以直接在此处进行数据传输。
+当然两个方面你都可以进行通讯尝试。
+
+### 21.3 软件程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 13_uart。
+
+本章实验在上一章例程的基础上完成，更改工程名字为“uart”，然后在 bsp 文件夹下创建名为“uart”的文件夹，然后在 bsp/uart 中新建 bsp_uart.c 和 bsp_uart.h 这两个文件。
+
+```C
+1  #ifndef _BSP_UART_H
+2  #define _BSP_UART_H
+3  #include "imx6ul.h"
+4  /***************************************************************
+5  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+6  文件名 : bsp_uart.h
+7  作者 : 左忠凯
+8  版本 : V1.0
+9  描述 : 串口驱动文件头文件。
+10 其他 : 无
+11 论坛 : www.openedv.com
+12 日志 : 初版 V1.0 2019/1/15 左忠凯创建
+13 ***************************************************************/
+15 /* 函数声明 */
+16 void uart_init(void);
+17 void uart_io_init(void);
+18 void uart_disable(UART_Type *base);
+19 void uart_enable(UART_Type *base);
+20 void uart_softreset(UART_Type *base);
+21 void uart_setbaudrate(UART_Type *base,unsigned int baudrate,unsigned int srcclock_hz);
+22 void putc(unsigned char c);
+23 void puts(char *str);
+24 unsigned char getc(void);
+25 void raise(int sig_nr);
+26
+27 #endif
+```
+bsp_uart.h 内容很简单，就是一些函数声明
+
+```C
+1 #include "bsp_uart.h"
+2
+3 /*
+4  * @description : 初始化串口 1,波特率为 115200
+5  * @param : 无
+6  * @return : 无
+7  */
+8 void uart_init(void)
+9 {
+10  /* 1、初始化串口 IO */
+11  uart_io_init();
+12
+13  /* 2、初始化 UART1 */
+14  uart_disable(UART1); /* 先关闭 UART1 */
+15  uart_softreset(UART1); /* 软件复位 UART1 */
+16
+17  UART1->UCR1 = 0; /* 先清除 UCR1 寄存器 */ //UCR1设置使能与波特率自动检测
+18  UART1->UCR1 &= ~(1<<14); /* 关闭自动波特率检测 */
+19
+20 /*
+21  * 设置 UART 的 UCR2 寄存器，设置字长，停止位，校验模式，关闭硬件流控
+22  * bit14: 1 忽略 RTS 引脚
+23  * bit8: 0 关闭奇偶校验 默认
+24  * bit6: 0 1 位停止位 默认
+25  * bit5: 1 8 位数据位
+26  * bit2: 1 打开发送
+27  * bit1: 1 打开接收
+28  */  //UCR2设置串口的配置
+29  UART1->UCR2 |= (1<<14) | (1<<5) | (1<<2) | (1<<1);//RT均使能UART打开后即可收发
+30  UART1->UCR3 |= 1<<2; /* UCR3 的 bit2 必须为 1 */
+31
+32 /*
+33  * 设置波特率
+34  * 波特率计算公式:Baud Rate = Ref Freq / (16 * (UBMR + 1)/(UBIR+1))
+35  * 如果要设置波特率为 115200，那么可以使用如下参数:
+36  * Ref Freq = 80M 也就是寄存器 UFCR 的 bit9:7=101, 表示 1 分频
+37  * UBMR = 3124
+38  * UBIR = 71
+39  * 因此波特率= 80000000/(16 * (3124+1)/(71+1))
+40  * = 80000000/(16 * 3125/72)
+41  * = (80000000*72) / (16*3125)
+42  * = 115200
+43  */
+44  UART1->UFCR = 5<<7; /* ref freq 等于 ipg_clk/1=80Mhz */
+45  UART1->UBIR = 71;
+46  UART1->UBMR = 3124;
+47 
+48  #if 0
+49  uart_setbaudrate(UART1, 115200, 80000000); /* 设置波特率 */
+50  #endif
+51
+52  uart_enable(UART1); /* 使能串口 */
+53 }
+54
+55 /*
+56  * @description : 初始化串口 1 所使用的 IO 引脚
+57  * @param : 无
+58  * @return : 无
+59  */
+60 void uart_io_init(void)
+61 {
+62 /* 1、初始化串口 IO 复用功能以及IO配置
+63  * UART1_RXD -> UART1_TX_DATA
+64  * UART1_TXD -> UART1_RX_DATA
+65  */
+66  IOMUXC_SetPinMux(IOMUXC_UART1_TX_DATA_UART1_TX, 0);
+67  IOMUXC_SetPinMux(IOMUXC_UART1_RX_DATA_UART1_RX, 0);
+68  IOMUXC_SetPinConfig(IOMUXC_UART1_TX_DATA_UART1_TX, 0x10B0);
+69  IOMUXC_SetPinConfig(IOMUXC_UART1_RX_DATA_UART1_RX, 0x10B0);
+70 }
+71
+72 /*
+73  * @description : 波特率计算公式，
+74  * 可以用此函数计算出指定串口对应的 UFCR，
+75  * UBIR 和 UBMR 这三个寄存器的值
+76  * @param - base : 要计算的串口。
+77  * @param - baudrate : 要使用的波特率。
+78  * @param - srcclock_hz : 串口时钟源频率，单位 Hz
+79  * @return : 无
+80  */
+81 void uart_setbaudrate(UART_Type *base,unsigned int baudrate,unsigned int srcclock_hz)
+82 {
+83  uint32_t numerator = 0u;
+84  uint32_t denominator = 0U;
+85  uint32_t divisor = 0U;
+86  uint32_t refFreqDiv = 0U;
+87  uint32_t divider = 1U;
+88  uint64_t baudDiff = 0U;
+89  uint64_t tempNumerator = 0U;
+90  uint32_t tempDenominator = 0u;
+91
+92  /* get the approximately maximum divisor */
+93  numerator = srcclock_hz;
+94  denominator = baudrate << 4;
+95  divisor = 1;
+96
+97  while (denominator != 0)
+98  {
+99      divisor = denominator;
+100     denominator = numerator % denominator;
+101     numerator = divisor;
+102 }
+103
+104 numerator = srcclock_hz / divisor;
+105 denominator = (baudrate << 4) / divisor;
+106
+107 /* numerator ranges from 1 ~ 7 * 64k */
+108 /* denominator ranges from 1 ~ 64k */
+109 if ((numerator > (UART_UBIR_INC_MASK * 7)) || (denominator > UART_UBIR_INC_MASK))
+110 {
+111     uint32_t m = (numerator - 1) / (UART_UBIR_INC_MASK * 7) + 1;
+112     uint32_t n = (denominator - 1) / UART_UBIR_INC_MASK + 1;
+113     uint32_t max = m > n ? m : n;
+114     numerator /= max;
+115     denominator /= max;
+116     if (0 == numerator)
+117     {
+118         numerator = 1;
+119     }
+120     if (0 == denominator)
+121     {
+122         denominator = 1;
+123     }
+124 }
+125 divider = (numerator - 1) / UART_UBIR_INC_MASK + 1;
+126
+127 switch (divider)
+128 {
+129     case 1:
+130         refFreqDiv = 0x05;
+131         break;
+132     case 2:
+133         refFreqDiv = 0x04;
+134         break;
+135     case 3:
+136         refFreqDiv = 0x03;
+137         break;
+138     case 4:
+139         refFreqDiv = 0x02;
+140         break;
+141     case 5:
+142         refFreqDiv = 0x01;
+143         break;
+144     case 6:
+145         refFreqDiv = 0x00;
+146         break;
+147     case 7:
+148         refFreqDiv = 0x06;
+149         break;
+150     default:
+151         refFreqDiv = 0x05;
+152         break;
+153 }
+154 /* Compare the difference between baudRate_Bps and calculated
+155 * baud rate. Baud Rate = Ref Freq / (16 * (UBMR + 1)/(UBIR+1)).
+156 * baudDiff = (srcClock_Hz/divider)/( 16 * ((numerator /divider)/ denominator).
+157 */
+158 tempNumerator = srcclock_hz;
+159 tempDenominator = (numerator << 4);
+160 divisor = 1;
+161 /* get the approximately maximum divisor */
+162 while (tempDenominator != 0)
+163 {
+164     divisor = tempDenominator;
+165     tempDenominator = tempNumerator % tempDenominator;
+166     tempNumerator = divisor;
+167 }
+168 tempNumerator = srcclock_hz / divisor;
+169 tempDenominator = (numerator << 4) / divisor;
+170 baudDiff = (tempNumerator * denominator) / tempDenominator;
+171 baudDiff = (baudDiff >= baudrate) ? (baudDiff - baudrate) :(baudrate - baudDiff);
+172
+173 if (baudDiff < (baudrate / 100) * 3)
+174 {
+175     base->UFCR &= ~UART_UFCR_RFDIV_MASK;
+176     base->UFCR |= UART_UFCR_RFDIV(refFreqDiv);
+177     base->UBIR = UART_UBIR_INC(denominator - 1);
+178     base->UBMR = UART_UBMR_MOD(numerator / divider - 1);
+179 }
+180 }
+181
+182 /*
+183  * @description : 关闭指定的 UART
+184  * @param – base : 要关闭的 UART
+185  * @return : 无
+186  */
+187 void uart_disable(UART_Type *base)
+188 {
+189     base->UCR1 &= ~(1<<0);
+190 }
+191
+192 /*
+193  * @description : 打开指定的 UART
+194  * @param – base : 要打开的 UART
+195  * @return : 无
+196  */
+197 void uart_enable(UART_Type *base)
+198 {
+199     base->UCR1 |= (1<<0);
+200 }
+201
+202 /*
+203 * @description : 复位指定的 UART
+204 * @param – base : 要复位的 UART
+205 * @return : 无
+206 */
+207 void uart_softreset(UART_Type *base)
+208 {
+209     base->UCR2 &= ~(1<<0); /* 复位 UART 写入0*/
+210     while((base->UCR2 & 0x1) == 0); /* 等待复位完成 */
+211 }
+212
+213 /*
+214  * @description : 发送一个字符
+215  * @param - c : 要发送的字符
+216  * @return : 无
+217  */
+218 void putc(unsigned char c)
+219 {
+220     while(((UART1->USR2 >> 3) &0X01) == 0);/* 等待上一次发送完成 */
+221     UART1->UTXD = c & 0XFF; /* 发送数据 只取低八位*/
+222 }
+223
+224 /*
+225  * @description : 发送一个字符串
+226  * @param - str : 要发送的字符串
+227  * @return : 无
+228  */ //str结尾以\0 遇到\0后循环就停止
+229 void puts(char *str)
+230 {
+231     char *p = str;//定义一个指针变量
+232
+233     while(*p)
+234         putc(*p++);// p++ 表达式为 p p为++p 单目右向左结合
+235 }
+236
+237 /*
+238 * @description : 接收一个字符
+239 * @param : 无
+240 * @return : 接收到的字符
+241 */
+242 unsigned char getc(void)
+243 {
+244     while((UART1->USR2 & 0x1) == 0); /* 等待接收完成 收到时变为1自动清0*/
+245     return UART1->URXD; /* 返回接收到的数据 */
+246 }
+247
+248 /*
+249 * @description : 防止编译器报错 平台一致性
+250 * @param : 无
+251 * @return : 无
+252 */
+253 void raise(int sig_nr)
+254 {
+255
+256 }
+```
+
+文件 bsp_uart.c 中共有 10 个函数，我们依次来看一下这些函数都是做什么的。
+第一个函数是 uart_init，这个函数是 UART1 初始化函数，用于初始化 UART1 相关的 IO、并且设置 UART1的波特率、字长、停止位和校验模式等，初始化完成以后就使能 UART1。
+第二个函数是uart_io_init，用于初始化 UART1 所使用的 IO。
+第三个函数是 uart_setbaudrate，这个函数是从NXP 官方的 SDK 包里面移植过来的，用于设置波特率。
+我们只需将要设置的波特率告诉此函数，此函数就会使用逐次逼近方式来计算出寄存器 UART1_UFCR 的 FRDIV 位、寄存器UART1_UBIR 和寄存器 UART1_UBMR 这三个的值。
+第四和第五这两个函数为 uart_disable 和uart_enable，分别是使能和关闭 UART1。
+第六个函数是 uart_softreset，用于软件复位指定的 UART。
+第七个函数是putc，用于通过UART1发送一个字节的数据。第八个函数是puts，用于通过UART1发送一串数据。
+第九个函数是 getc，用于通过 UART1 获取一个字节的数据。
+最后一个函数是raise，这是一个空函数，防止编译器报错。
+
+main.c如下设计：
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_uart.h"
+8
+9 /*
+10 * @description : main 函数
+11 * @param : 无
+12 * @return : 无
+13 */
+14 int main(void)
+15 {
+16      unsigned char a=0;
+17      unsigned char state = OFF;
+18
+19      int_init(); /* 初始化中断(一定要最先调用！) */
+20      imx6u_clkinit(); /* 初始化系统时钟 */
+21      delay_init(); /* 初始化延时 */
+22      clk_enable(); /* 使能所有的时钟 */
+23      led_init(); /* 初始化 led */
+24      beep_init(); /* 初始化 beep */
+25      uart_init(); /* 初始化串口，波特率 115200 */
+26
+27      while(1)
+28      {
+29          puts("请输入 1 个字符:"); //写入串口 显示
+30          a=getc();//获取串口输入 没有输入恒等
+31          putc(a); /* 回显功能到串口 */
+32          puts("\r\n");
+33
+34          /* 显示输入的字符 */
+35          puts("您输入的字符为:");
+36          putc(a);
+37          puts("\r\n\r\n");
+38
+39          state = !state;
+40          led_switch(LED0,state);
+41      }
+42      return 0;
+43 }
+```
+输入SecureCRT中输入时，就已经发送默认不回显，所以显putc(a)显示一下
+
+### 21.4 编译下载
+
+#### 21.4.1 编写Makefile
+
+```makefile
+1 CROSS_COMPILE ?= arm-linux-gnueabihf2 TARGET ?= uart
+3
+4 CC := $(CROSS_COMPILE)gcc
+5 LD := $(CROSS_COMPILE)ld
+6 OBJCOPY := $(CROSS_COMPILE)objcopy
+7 OBJDUMP := $(CROSS_COMPILE)objdump
+8
+9 LIBPATH := -lgcc -L /usr/local/arm/gcc-linaro-4.9.4-2017.01-
+x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/4.9.4
+10
+11
+12 INCDIRS := imx6ul \
+13 bsp/clk \
+14 bsp/led \
+15 bsp/delay \
+16 bsp/beep \
+17 bsp/gpio \
+18 bsp/key \
+19 bsp/exit \
+20 bsp/int \
+21 bsp/epittimer \
+22 bsp/keyfilter \
+23 bsp/uart
+24
+25 SRCDIRS := project \
+26 bsp/clk \
+27 bsp/led \
+28 bsp/delay \
+29 bsp/beep \
+30 bsp/gpio \
+31 bsp/key \
+32 bsp/exit \
+33 bsp/int \
+34 bsp/epittimer \
+35 bsp/keyfilter \
+36 bsp/uart
+37
+38
+39 INCLUDE := $(patsubst %, -I %, $(INCDIRS))
+40
+41 SFILES := $(foreach dir, $(SRCDIRS), $(wildcard $(dir)/*.S))
+42 CFILES := $(foreach dir, $(SRCDIRS), $(wildcard $(dir)/*.c))
+43
+44 SFILENDIR := $(notdir $(SFILES))
+45 CFILENDIR := $(notdir $(CFILES))
+46
+47 SOBJS := $(patsubst %, obj/%, $(SFILENDIR:.S=.o))
+48 COBJS := $(patsubst %, obj/%, $(CFILENDIR:.c=.o))
+49 OBJS := $(SOBJS) $(COBJS)
+50
+51 VPATH := $(SRCDIRS)
+52
+53 .PHONY: clean
+54
+55 $(TARGET).bin : $(OBJS)
+56 $(LD) -Timx6ul.lds -o $(TARGET).elf $^ $(LIBPATH)
+57 $(OBJCOPY) -O binary -S $(TARGET).elf $@
+58 $(OBJDUMP) -D -m arm $(TARGET).elf > $(TARGET).dis
+59
+60 $(SOBJS) : obj/%.o : %.S
+61 $(CC) -Wall -nostdlib -fno-builtin -c -O2 $(INCLUDE) -o $@ $<
+62
+63 $(COBJS) : obj/%.o : %.c
+64 $(CC) -Wall -nostdlib -fno-builtin -c -O2 $(INCLUDE) -o $@ $<
+65
+66 clean:
+67 rm -rf $(TARGET).elf $(TARGET).dis $(TARGET).bin $(COBJS) $(SOBJS)
+```
+上述的 Makefile 文件内容和上一章实验的区别不大。将 TARGET 为 uart，在 INCDIRS 和SRCDIRS 中加入“bsp/uart”。
+
+但是，相比上一章中的 Makefile 文件，本章实验的 Makefile 有两处重要的改变：
+
+①、本章 Makefile 文件在链接的时候加入了数学库， 因为在 bsp_uart.c 中有个函数uart_setbaudrate，在此函数中使用到了除法运算，因此在链接的时候需要将编译器的数学库也链接进来。
+第9行的变量LIBPATH就是数学库的目录，在第56行链接的时候使用了变量LIBPATH。
+
+在后面的学习中，我们常常要用到一些第三方库，那么在连接程序的时候就需要指定这些第三方库所在的目录，Makefile 在链接的时候使用选项“-L”来指定库所在的目录，比如“示例代码”中第 9 行的变量 LIBPATH 就是指定了我们所使用的编译器库所在的目录。
+
+②、在第 61 行和 64 行中，加入了选项“-fno-builtin”，否则编译的时候提示“putc”、“puts”这两个函数与内建函数冲突，错误信息如下所示：
+
+![alt](./images/Snipaste_2024-11-29_19-37-55.png)
+
+在编译的时候加入选项“-fno-builtin”表示不使用内建函数，这样我们就可以自己实现 putc和 puts 这样的函数了。
+
+-I 头文件地址 -l 库名 -L 库路径
+链接脚本保持不变。
+
+#### 21.4.2 编译下载
+
+烧写成功以后将 SD 卡插到开发板的 SD 卡槽中，然后复位开发板。
+打开 SourceCRT，点击 File->Quick Connect…，打开快速连接设置界面，设置好相应的串口参数，比如在我的电脑上是COM3
+
+![alt](./images/Snipaste_2024-11-29_20-02-58.png)
+
+设置:
+![alt](./images/Snipaste_2024-11-29_20-03-45.png)
+
+![alt](./images/Snipaste_2024-11-29_20-05-38.png)
+
+测试成功！！！
+
+## 第二十二章 串口格式化函数
+
+上一章实验我们实现了 UART1 基本的数据收发功能，虽然可以用来调试程序，但是功能太单一了，只能输出字符。
+如果需要输出数字的时候就需要我们自己先将数字转换为字符，非常的不方便。
+学习 STM32 串口的时候我们都会将 printf 函数映射到串口上，这样就可以使用printf 函数来完成格式化输出了，使用非常方便。
+本章我们就来学习如何将 printf 这样的格式化函数移植到 I.MX6U-ALPHA 开发板上。
+
+### 22.1 串口格式化函数简介
+
+格式化函数说的是 printf、sprintf 和 scanf 这样的函数，分为格式化输入和格式化输出两类函数。
+学习 C 语言的时候常常通过 printf 函数在屏幕上显示字符串，通过 scanf 函数从键盘获取输入。
+这样就有了输入和输出了，实现了最基本的人机交互。学习 STM32 的时候会将 printf 映射到串口上，这样即使没有屏幕，也可以通过串口来和开发板进行交互。
+在 I.MX6U-ALPHA 开发板上也可以使用此方法，将 printf 和 scanf 映射到串口上，这样就可以使用 SecureCRT 作为开发板的终端，完成与开发板的交互。
+也可以使用 printf 和 sprintf 来实现各种各样的格式化字符串，方便我们后续的开发。
+串口驱动我们上一章已经编写完成了，而且实现了最基本的字节收发，本章我们就通过移植网上别人已经做好的文件来实现格式化函数。
+
+### 22.2 硬件原理
+
+同21章
+
+### 22.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 14_printf。
+
+本章实验所需要移植的源码已经放到了开发板光盘中，路径为：1、例程源码->5、模块驱动源码->2、格式化函数源码->stdio，文件夹 stdio 里面的文件就是我们要移植的源码文件。
+本章实验在上一章例程的基础上完成，将 stdio 文件夹复制到实验工程根目录中：
+如图
+![alt](./images/Snipaste_2024-11-29_20-51-48.png)
+
+stdio 里面有两个文件夹：include 和 lib，这两个文件夹里面的内容如图 22.3.2 所示：
+
+![alt](./images/Snipaste_2024-11-29_20-52-36.png)
+
+图中就是 stdio 里面的所有文件，stdio 里面的文件其实是从 uboot 里面移植过来的。
+后面学习 uboot 以后大家有兴趣的话可以自行从 uboot 源码里面“扣”出相应的文件，完成格式化函数的移植。
+这里要注意一点，stdio 中并没有实现完全版的格式化函数，比如 printf 函数并不支持浮点数，但是基本够我们使用了。
+
+移植好以后就要测试相应的函数工作是否正常，我们使用 scanf 函数等待键盘输入两个整数，然后将两个整数进行相加并使用 printf 函数输出结果。
+在 main.c 里面输入如下内容：
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_uart.h"
+8 #include "stdio.h"
+9
+10 /*
+11  * @description : main 函数
+12  * @param : 无
+13  * @return : 无
+14  */
+15 int main(void)
+16 {
+17      unsigned char state = OFF;
+18      int a , b;
+19
+20      int_init(); /* 初始化中断(一定要最先调用！) */
+21      imx6u_clkinit(); /* 初始化系统时钟 */
+22      delay_init(); /* 初始化延时 */
+23      clk_enable(); /* 使能所有的时钟 */
+24      led_init(); /* 初始化 led */
+25      beep_init(); /* 初始化 beep */
+26      uart_init(); /* 初始化串口，波特率 115200 */
+27
+28      while(1)
+29      {
+30          printf("输入两个整数，使用空格隔开:");
+31          scanf("%d %d", &a, &b); /* 输入两个整数 */
+32          printf("\r\n 数据%d + %d = %d\r\n\r\n", a, b, a+b);/* 输出和 */
+33
+34          state = !state;
+35          led_switch(LED0,state);
+36      }
+37
+38      return 0;
+39 }
+```
+
+### 22.4 编译下载验证
+
+#### 22.4.1 编写Makefile和链接脚本
+
+修改 Makefile 中的 TARGET 为 printf，在 INCDIRS 中加入“stdio/include”，在 SRCDIRS中加入“stdio/lib”
+
+INCDIRS 中添加头文件路径
+SRCDIRS 中添加源文件路径
+
+同时注意，（.c 到 .o）
+在编译 C 文件的时候添加了选项“-Wa,-mimplicit-it=thumb”，否则的话会有如下类似的错误提示：
+
+![alt](./images/Snipaste_2024-11-29_21-01-05.png)
+
+补充 参数解释：
+
+    在 GCC 编译器中，-Wa 和 -mimplicit-it=thumb 是两个不同的选项，它们的作用如下：
+    1. -Wa 参数：
+        -Wa 选项用于传递选项给汇编器（assembler）。
+        其后可以跟一个或多个汇编器选项。
+        这意味着你通过 -Wa 告诉 GCC 将某些选项传递给底层的汇编器，而不是给 GCC 自身的编译器。
+        例如：
+        gcc -Wa,-option
+        这会将 -option 传递给汇编器。这样，你可以控制汇编过程中的一些行为。
+
+    在你的命令中，-Wa 后面跟的是 -mimplicit-it=thumb，意味着将 -mimplicit-it=thumb 选项传递给汇编器。
+
+    2. -mimplicit-it=thumb 参数：
+        -mimplicit-it=thumb 是与 ARM 架构相关的 GCC 编译选项，指定如何处理 IT（If-Then）指令和使用的指令集架构。
+        IT 指令是 ARM 汇编语言中的一种条件执行指令，它可以使后续的一些指令只在满足某些条件时执行，这有助于减少代码大小。
+        -mimplicit-it=thumb 选项的作用是启用在 Thumb 模式下使用 隐式 IT 指令。
+        在 ARM 架构中，Thumb 模式是一种32位 ARM 指令集的精简版本，它将指令集大小从 32 位压缩到 16 位，因此在 Thumb 模式下执行的代码通常比 ARM 模式下更紧凑。
+
+        具体含义：
+        -mimplicit-it=thumb：启用在 Thumb 模式下隐式生成 IT 指令。
+        这表示编译器在生成 Thumb 模式的代码时，会隐式地插入 IT 指令，以便后续的一些指令能够根据条件进行执行。
+        
+        在 Thumb 模式下，IT 指令常用于生成短的条件跳转（比如执行某个指令只有在满足条件时才会被执行）。
+        启用这个选项意味着编译器会默认处理这些条件执行的指令，而不需要显式地在汇编代码中使用 IT 指令。
+
+        例如，IT 指令允许在一个 16 位的 Thumb 指令流中执行多个条件指令（减少了控制流指令的数量，从而提高代码效率）。
+
+        总结：
+        -Wa,-mimplicit-it=thumb 告诉 GCC 将 -mimplicit-it=thumb 选项传递给汇编器，启用在 Thumb 模式下使用隐式的 IT 指令。
+        这对 ARM 体系架构中的条件执行和代码优化非常重要，特别是在生成精简且高效的代码时。
+        如果你正在为 ARM 架构编写代码并且希望优化代码体积，使用这种方式可以减少 if 或 switch 语句等条件控制流的开销，特别是针对使用 Thumb 模式的目标设备。
+
+#### 22.4.2 编译下载
+
+下载验证即可
+
+![alt](./images/Snipaste_2024-11-29_21-09-02.png)
+
+测试成功
+
+## 第二十三章 DDR3实验
+
+I.MX6U-ALPHA 开发板上带有一个 256MB/512MB 的 DDR3 内存芯片，一般 Cortex-A 芯片自带的 RAM 很小，比如 I.MX6U 只有 128KB 的 OCRAM。
+如果要运行 Linux 的话完全不够用的，所以必须要外接一片 RAM 芯片，I.MX6U 支持 LPDDR2、LPDDR3/DDR3，I.MX6U-ALPHA开发板上选择的是 DDR3。
+本章就来学习如何驱动 I.MX6U-ALPHA 开发板上的这片 DDR3。
+
+### 23.1 DDR3内存简介
+
+在正式学习 DDR3 内存之前，我们要先了解一下 DDR 内存的发展历史，通过对比 SRAM、SDRAM、DDR、DDDR2 和 DDR3 的区别，有助于我们更加深入的理解什么是 DDR。
+在看 DDR之前我们先来了解一个概念，那就是什么叫做 RAM?
+
+#### 23.1.1 何为RAM和ROM
+
+相信大家在购买手机、电脑等电子设备的时候，通常都会听到 RAM、ROM、硬盘等概念，很多人都是一头雾水的。
+普通用户区分不清楚 RAM、ROM 到可以理解，但是作为一个嵌入式Linux 开发者，要是不清楚什么是 RAM、什么是 ROM 就绝对不行！
+RAM 和 ROM 专业的解释如下:
+
+**RAM**：随机存储器，可以随时进行读写操作，速度很快，掉电以后数据会丢失。比如内存条、SRAM、SDRAM、DDR 等都是 RAM。
+RAM 一般用来保存程序数据、中间结果，比如我们在程序中定义了一个变量 a，然后对这个 a 进行读写操作，示例代码如下：
+```C
+1 int a;
+2 a = 10;
+```
+a 是一个变量，我们需要很方便的对这个变量进行读写操作，方法就是直接“a”进行读写操作，不需要在乎具体的读写过程。
+我们可以随意的对 RAM 中任何地址的数据进行读写操作，非常方便。
+
+**ROM**：只读存储器，笔者认为目前“只读存储器”这个定义不准确。
+比如我们买手机，通常会告诉你这个手机是 4+64 或 6+128 配置，说的就是 RAM 为 4GB 或 6GB，ROM 为 64G 或 128GB。
+但是这个 ROM 是 Flash，比如 EMMC 或 UFS 存储器，因为历史原因，很多人还是将Flash 叫做 ROM。
+但是 EMMC 和 UFS，甚至是 NAND Flash，这些都是可以进行写操作的！只
+是写起来比较麻烦，要先进行擦除，然后再发送要写的地址或扇区，最后才是要写入的数据，学习过 STM32，使用过 WM25QXX 系列的 SPI Flash 的同学应该深有体会。
+可以看出，相比于RAM，向 ROM 或者 Flash 写入数据要复杂很多，因此意味着速度就会变慢(相比 RAM)，但是ROM 和 Flash 可以将容量做的很大，而且掉电以后数据不会丢失，适合用来存储资料，比如音乐、图片、视频等信息。
+
+综上所述，RAM 速度快，可以直接和 CPU 进行通信，但是掉电以后数据会丢失，容量不容易做大(和同价格的 Flash 相比)。
+ROM(目前来说，更适合叫做 Flash)速度虽然慢，但是容量大、适合存储数据。
+对于正点原子的 I.MX6U-ALPHA 开发板而言，256MB/512MB 的 DDR3 就是 RAM，而 512MB NANF Flash 或 8GB EMMC 就是 ROM。
+
+#### 23.1.2 SRAM简介(六个cmos构成)
+
+为什么要讲 SRAM 呢？因为大多数的朋友最先接触 RAM 芯片都是从 SRAM 开始的，因为大量的 STM32 单片机开发板都使用到了 SRAM，比如 F103、F407 等，基本都会外扩一个512KB 或 1MB 的 SRAM 的，因为 STM32F103/F407 内部 RAM 比较小，在一些比较耗费内存的应用中会出现内存捉紧的情况，比如 emWin 做 UI 界面。
+我们简单回顾一下 SRAM，如果想要详细的了解 SRAM 请阅读正点原子 STM32F103 战舰开发板的开发指南。
+
+SRAM 的全称叫做 Static Random-Access Memory，也就是静态随机存储器，这里的“静态”说的就是只要 SRAM 上电，那么 SRAM 里面的数据就会一直保存着，直到 SRAM 掉电。
+
+对于RAM 而言需要可以随机的读取任意一个地址空间内的数据，因此采用了地址线和数据线分离的方式，这里就以 STM32F103/F407 开发板常用的 IS62WV51216 这颗 SRAM 芯片为例简单的讲解一下 SRAM，这是一颗 16 位宽(数据位为 16 位)、1MB 大小的 SRAM，芯片框图如图：
+
+![alt](./images/Snipaste_2024-11-29_21-31-05.png)
+
+图主要分为三部分，我们依次来看一下这三部分：
+
+①、**地址线**
+
+这部分是地址线，一共 A0\~A18，也就是 19 根地址线，因此可访问的地址大小就是2^19=524288=512KB。
+不是说 IS62WV51216 是个 1MB 的 SRAM 吗？为什么地址空间只有512KB？
+前面我们说了 IS62WV51216 是 16 位宽的，也就是一次访问 2 个字节，因此需要对512KB 进行乘 2 处理，得到 512KB*2=1MB。
+位宽的话一般有 8 位/16 位/32 位，根据实际需求选择即可，一般都是根据处理器的 SRAM 控制器位宽来选择 SRAM 位宽。
+
+②、**数据线**
+
+这部分是 SRAM 的数据线，根据 SRAM 位宽的不同，数据线的数量要不同，8 位宽就有 8根数据线，16 位宽就有 16 根数据线，32 位宽就有 32 根数据线。
+IS62WV51216 是一个 16 位宽的 SRAM，因此就有 16 根数据线，一次访问可以访问 16bit 的数据，也就是 2 个字节。
+因此就有高字节和低字节数据之分，其中 IO0\~IO7 是低字节数据，IO8\~IO15 是高字节数据。
+
+③、**控制线**
+
+SRAM 要工作还需要一堆的控制线，CS2 和 CS1 是片选信号，低电平有效，在一个系统中可能会有多片 SRAM(目的是为了扩展 SRAM 大小或位宽)，这个时候就需要 CS 信号来选择当前使用哪片 SRAM。
+另外，有的 SRAM 内部其实是由两片 SRAM 拼接起来的，因此就会提供两个片选信号。
+OE 是输出使能信号，低电平有效，也就是主控从 SRAM 读取数据。
+WE 是写使能信号，低电平有效，也就是主控向 SRAM 写数据。
+UB 和 LB 信号，前面我们已经说了，IS62WV51216 是个 16 位宽的 SRAM，分为高字节和低字节，那么如何来控制读取高字节数据还是低字节数据呢？
+这个就是 UB 和 LB 这两个控制线的作用，这两根控制线都是低电平有效。
+UB 为低电平的话表示访问高字节，LB 为低电平的话表示访问低字节。
+
+关于 IS62WV51216 的简单原理就讲解到这里。
+
+那么 SRAM 有什么缺点没有？那必须有的啊，要不然就不可能有本章教程了，SRAM 最大的缺点就是成本高！价格高！
+大家可以在淘宝上搜索一下 IS62WV51216 这个仅仅只有 1MB大小的 SRAM 售价为多少，大概为 5,6 块钱。
+大家再搜索一下 32MB 的 SDRAM 多钱，以华邦的 W9825G6KH 为例，大概 4,5 块钱，可以看出 SDRAM 比 SRAM 容量大，但是价格更低。
+SRAM 突出的特点就是无需刷新(SDRAM 需要刷新，后面会讲解)，读写速度快！
+所以 SRAM通常作为 SOC 的内部 RAM 使用或 Cache 使用，比如 STM32 内存的 RAM 或 I.MX6U 内部的OCRAM 都是 SRAM。
+
+#### 23.1.3 SDRAM简介
+
+前面给大家简单讲解了 SRAM，可以看出 SRAM 最大的缺点就是价格高、容量小！但是应用对于内存的需求越来越高，必须提供大内存解决方案。
+为此半导体厂商想了很多办法，提出了很多解决方法，最终 SDRAM 应运而生，得到推广。
+
+SDRAM 全称是 Synchronous Dynamic Random Access Memory，翻译过来就是同步动态随机存储器，“同步”的意思是 SDRAM 工作需要时钟线，“动态”的意思是 SDRAM 中的数据需要不断的刷新来保证数据不会丢失，“随机”的意思就是可以读写任意地址的数据。(DRAM的升级，以电容作为存储信息的元件)
+
+与 SRAM 相比，SDRAM 集成度高、功耗低、成本低、适合做大容量存储，但是需要定时刷新来保证数据不会丢失。
+因此 SDRAM 适合用来做内存条，SRAM 适合做高速缓存或 MCU内部的 RAM。
+
+SDRAM 目前已经发展到了第四代，分别为：SDRAM、DDR SDRAM、DDR2 SDRAM、DDR3 SDRAM、DDR4 SDRAM。(2024年11/29日已经出现DDR5x)
+
+STM32F429/F767/H743 等芯片支持 SDRAM，学过 STM32F429/F767/H743 的朋友应该知道 SDRAM，这里我们就以 STM32 开发板最常用的华邦W9825G6KH 为例。
+W9825G6KH 是一款 16 位宽(数据位为 16 位)、32MB 的 SDRAM、速度一般为 133MHz、166MHz 或 200MHz。
+
+W9825G6KH 框图如图：
+
+![alt](./images/Snipaste_2024-11-29_21-43-54.png)
+
+①、**控制线**
+SDRAM 也需要很多控制线，我们依次来看一下：
+
+CLK：时钟线，SDRAM 是同步动态随机存储器，“同步”的意思就是时钟，因此需要一根额外的时钟线，这是和 SRAM 最大的不同，SRAM 没有时钟线。
+CKE：时钟使能信号线，SRAM 没有 CKE 信号。
+CS：片选信号，这个和 SRAM 一样，都有片选信号。
+RAS：行选通信号，低电平有效，SDRAM 和 SRAM 的寻址方式不同。
+SDRAM 按照行、列来确定某个具体的存储区域。
+因此就有行地址和列地址之分，行地址和列地址共同复用同一组地址线，要访问某一个地址区域，必须要发送行地址和列地址，指定要访问哪一行？哪一列？
+RAS 是行选通信号，表示要发送行地址，行地址和列地址访问方式如图所示：
+
+![alt](./images/Snipaste_2024-11-29_21-46-27.png)
+
+复用地址线 @计算机组成原理
+
+②、**A10 地址线**
+
+A10 是地址线，那么这里为什么要单独将 A10 地址线给提出来呢？
+因为 A10 地址线还有另外一个作用，A10 还控制着 Auto-precharge，也就是预充电。
+这里又提到了预充电的概念，SDRAM芯片内部会分为多个 BANK，关于 BANK 我们稍后会讲解。
+SDRAM 在读写完成以后，如果要对同一个 BANK 中的另一行进行寻址操作就必须将原来有效的行关闭，然后发送新的行/列地址，关闭现在工作的行，准备打开新行的操作就叫做预充电。
+一般 SDSRAM 都支持自动预充电的功能。
+
+③、**地址线**
+对于 W9825G6KH 来说一共有 A0\~A12，共 13 根地址线，但是我们前面说了 SDRAM 寻址是按照行地址和列地址来访问的，因此这 A0\~A12 包含了行地址和列地址。
+不同的 SDRAM 芯片，根据其位宽、容量等的不同，行列地址数是不同的，这个在 SDRAM 的数据手册里面会也清楚的。
+比如 W9825G6KH 的 A0\~A8 是列地址，一共 9 位列地址，A0\~A12 是行地址，一共 13位，因此可寻址范围为：2^9 * 2^13=4194304B=4MB，W9825G6KH 为 16 位宽(2 个字节)，因此还需要对 4MB 进行乘 2 处理，得到 4 * 2=8MB，但是 W9825G6KH 是一个 32MB 的 SDRAM 啊，为什么算出来只有 8MB，仅仅为实际容量的 1/4。
+不要急，这个就是我们接下来要讲的 BANK，8MB 只是一个 BANK 的容量，W9825G6KH 一共有 4 个 BANK。
+
+④、**BANK 选择线**
+BS0 和 BS1 是 BANK 选择信号线，在一片 SDRAM 中因为技术、成本等原因，不可能做一个全容量的 BANK。
+而且，因为 SDRAM 的工作原理，单一的 BANK 会带来严重的寻址冲突，减低内存访问效率。
+为此，人们在一片 SDRAM 中分割出多块 BANK，一般都是 2 的 n 次方，比如 2，4，8 等。
+图中的⑤就是 W9825G6KH 的 4 个 BANK 示意图，每个 SDRAM 数据手册里面都会写清楚自己是几 BANK。
+前面我们已经计算出来了一个 BANK 的大小为 8MB，那么四个 BANK 的总容量就是 8MB * 4=32MB。
+
+既然有4个BANK，那么在访问的时候就需要告诉SDRAM，我们现在需要访问哪个BANK，BS0 和 BS1 就是为此而生的，4 个 BANK 刚好 2 根线，如果是 8 个 BANK 的话就需要三根线，也就是 BS0~BS2。BS0、BS1 这两个线也是 SRAM 所没有的。
+
+⑤、**BANK 区域**
+
+关于 BANK 的概念前面已经讲过了，这部分就是 W9825G6KH 的 4 个 BANK 区域。这个概念也是 SRAM 所没有的。
+
+⑥、**数据线**
+W9825G6KH 是 16 位宽的 SDRAM，因此有 16 根数据线，DQ0~DQ15，不同的位宽其数据线数量不同，这个和 SRAM 是一样的。
+
+⑦、**高低字节选择**
+
+W9825G6KH 是一个 16 位的 SDRAM，因此就分为低字节数据和高字节数据，LDQM 和
+UDQM 就是低字节和高字节选择信号，这个也和 SRAM 一样。
+
+#### 23.1.4 DDR简介
+
+终于到了 DDR 内存了，DDR 内存是 SDRAM 的升级版本，SDRAM 分为 SDR SDRAM、DDR SDRAM、DDR2 SDRAM、DDR3 SDRAM、DDR4 SDRAM。
+可以看出 DDR 本质上还是SDRAM，只是随着技术的不断发展，DDR 也在不断的更新换代。
+先来看一下 DDR，也就是DDR1，人们对于速度的追求是永无止境的，当发现 SDRAM 的速度不够快的时候人们就在思考如何提高 SDRAM 的速度，DDR SDRAM 由此诞生。
+
+DDR 全称是 Double Data Rate SDRAM，也就是双倍速率 SDRAM，看名字就知道 DDR 的速率(数据传输速率)比 SDRAM 高 1 倍！
+这 1 倍的速度不是简简单单的将 CLK 提高 1 倍，SDRAM 在一个 CLK 周期传输一次数据，DDR 在一个 CLK 周期传输两次数据，也就是在上升沿和下降沿各传输一次数据，这个概念叫做预取(prefetch)，相当于 DDR 的预取为 2bit，因此DDR 的速度直接加倍！
+比如 SDRAM 速度一般是 133~200MHz，对应的传输速度就是133~200MT/s，在描述 DDR 速度的时候一般都使用 MT/s，也就是每秒多少兆次数据传输。
+133MT/S 就是每秒 133M 次数据传输，MT/s 描述的是单位时间内传输速率。
+同样 133~200MHz的频率，DDR 的传输速度就变为了 266~400MT/S，所以大家常说的 DDR266、DDR400 就是这么来的。
+
+DDR2 在 DDR 基础上进一步增加预取(prefetch)，增加到了 4bit，相当于比 DDR 多读取一倍的数据，因此 DDR2 的数据传输速率就是 533~800MT/s，这个也就是大家常说的 DDR2 533、DDR2 800。当然了，DDR2 还有其他速度，这里只是说最常见的几种。
+
+DDR3 在 DDR2 的基础上将预取(prefetch)提高到 8bit，因此又获得了比 DDR2 高一倍的传输速率，因此在总线时钟同样为 266~400MHz 的情况下，DDR3 的传输速率就是 1066~1600MT/S。
+I.MX6U 的 MMDC 外设用于连接 DDR，支持 LPDDR2、DDR3、DDR3L，最高支持 16 位数据位宽。
+总线速度为 400MHz(实际是 396MHz)，数据传输速率最大为 800MT/S。
+这里我们讲一下LPDDR3、DDR3 和 DDR3L 的区别，这三个都是 DDR3，但是区别主要在于工作电压。
+LPDDR3叫做低功耗 DDR3，工作电压为 1.2V。
+DDR3 叫做标压 DDR3，工作电压为 1.5V，一般台式内存条都是 DDR3。
+DDR3L 是低压 DDR3，工作电压为 1.35V，一般手机、嵌入式、笔记本等都使用 DDR3L。
+
+正点原子的 I.MX6U-ALPHA 开发板上接了一个 256MB/512MB 的 DDR3L，16 位宽，型号为NT5CC128M16JR/MT5CC256M16EP，nanya 公司出品的，分为对应 256MB 和 512MB 容量。
+EMMC 核心板上用的 512MB 容量的 DDR3L，NAND 核心板上用的 256MB 容量的 DDR3L。
+
+本讲解我们就以 EMMC 核心板上使用的 NT5CC256M16EP-EK 为例讲解一下 DDR3。
+可以到 nanya官网去查找一下此型号，信息如图：
+
+![alt](./images/Snipaste_2024-11-29_22-02-54.png)
+
+从图可以看出，NT5CC256M16EP-EK 是一款容量为 4Gb，也就是 512MB 大小、16 位宽、1.35V、传输速率为 1866MT/S 的 DDR3L 芯片。
+NT5CC256M16EP-EK 的数据手册没有在 nanya 官网找到，但是找到了 NT5CC256M16ER-EK 数据手册，在官网上没有看出这两个有什么区别，因此我们就直接用 NT5CC256M16ER-EK 的数据手册。
+数据手册已经放到了开发板光盘中，路径为：6、硬件资料-》1、芯片资料-》NT5CC256M16EP-EK.pdf。
+
+但是数据手册并没有给出 DDR3L 对的结构框图，这里我就直接用镁光 MT41K256M16 数据手册里面的结构框图了，都是一样的，DDR3L 结构框图如图所示：
+
+![alt](./images/Snipaste_2024-11-29_22-04-55.png)
+
+从图可以看出，DDR3L 和 SDRAM 对的结构框图很类似，但是还是有点区别。
+
+①、**控制线**
+ODT：片上终端使能，ODT 使能和禁止片内终端电阻。
+
+ZQ：输出驱动校准的外部参考引脚，此引脚应该外接一个 240 欧的电阻到 VSSQ 上，一般就是直接接地了。
+
+RESET：复位引脚，低电平有效。
+
+CKE：时钟使能引脚。
+
+A12：A12 是地址引脚，但是有也有另外一个功能，因此也叫做 BC 引脚，A12 会在 READ和 WRITE 命令期间被采样，以决定 burst chop 是否会被执行。
+
+CK 和 CK#：时钟信号，DDR3 的时钟线是差分时钟线，所有的控制和地址信号都会在 CK对的上升沿和 CK#的下降沿交叉处被采集。
+
+CS#：片选信号，低电平有效。
+
+RAS#、CAS#和 WE#：行选通信号、列选通信号和写使能信号。
+
+②、**地址线**
+
+A[14:0]为地址线，A0~A14，一共 15 根地址线，根据 NT5CC256M16ER-EK 的数据手册可知，列地址为 A0~A9，共 10 根，行地址为 A0~A14，共 15 根，因此一个 BANK 的大小就是2^10 * 2^15 * 2 = 32MB * 2 = 64MB，根据图可知一共有 8 个 BANK，因此 DDR3L 的容量就是 64 * 8=512MB。
+
+③、**BANK 选择线**
+
+一片 DDR3 有 8 个 BANK，因此需要 3 个线才能实现 8 个 BANK 的选择，BA0~BA2 就是用于完成 BANK 选择的。
+
+④、**BANK 区域**
+DDR3 一般都是 8 个 BANK 区域。
+
+⑤、**数据线**
+因为是 16 位宽的，因此有 16 根数据线，分别为 DQ0~DQ15。
+
+⑥、**数据选通引脚**
+
+DQS 和 DQS#是数据选通引脚，为差分信号，读的时候是输出，写的时候是输入。
+LDQS(有的叫做 DQSL)和 LDQS#(有的叫做 DQSL#)对应低字节，也就是 DQ0~7。
+UDQS(有的叫做 DQSU)和 UDQS#(有的叫做 DQSU#)，对应高字节，也就是 DQ8~15。
+
+⑦、**数据输入屏蔽引脚**
+
+DM 是写数据输入屏蔽引脚。
+
+关于 DDR3L 的框图就讲解到这里，想要详细的了解 DDR3 的组成，请阅读相应对的数据手册。
