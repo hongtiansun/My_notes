@@ -1,5 +1,6 @@
-## GPIO输出初始化
+# GPIO 初始化模板
 
+## GPIO输出初始化
 ```c
     //时钟初始化
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA,ENABLE);
@@ -55,6 +56,4 @@
 	
 	GPIO_Init(GPIOB,&GPIO_InitStructure);
 ```
-
-整理出KEY与LED模块
 
