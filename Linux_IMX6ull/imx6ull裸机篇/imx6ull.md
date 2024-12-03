@@ -11266,7 +11266,1834 @@ lds保持不变
 
 下载到SD卡运行即可
 
+补充：
+
+多个if判断语句推荐使用if-else或者switch-case(更高效)
+
+```c
+enum State { IDLE, RUNNING, STOPPED };
+enum State current_state = IDLE;
+
+switch (current_state) {
+    case IDLE:
+        // 处理空闲状态
+        break;
+    case RUNNING:
+        // 处理运行状态
+        break;
+    case STOPPED:
+        // 处理停止状态
+        break;
+    default:
+        // 错误处理
+        break;
+}
+```
+
 ## 第二十六章 IIC通信
 
+I2C 是最常用的通信接口，众多的传感器都会提供 I2C 接口来和主控相连，比如陀螺仪、加速度计、触摸屏等等。
+所以 I2C 是做嵌入式开发必须掌握的，I.MX6U 有 4 个 I2C 接口，可以通过这 4 个 I2C 接口来连接一些 I2C 外设。
+I.MX6U-ALPHA 使用 I2C1 接口连接了一个距离传感器 AP3216C，本章我们就来学习如何使用 I.MX6U 的 I2C 接口来驱动 AP3216C，读取AP3216C 的传感器数据。
 
+### 26.1 IIC & AP3216简介
+
+#### 26.1.1 IIC简介
+
+I2C 是很常见的一种总线协议，I2C 是 NXP 公司设计的，I2C 使用两条线在主控制器和从机之间进行数据通信。
+一条是 SCL(串行时钟线)，另外一条是 SDA(串行数据线)，这两条数据线需要接上拉电阻，总线空闲的时候 SCL 和 SDA 处于高电平。
+I2C 总线标准模式下速度可以达到 100Kb/S，快速模式下可以达到 400Kb/S。
+I2C 总线工作是按照一定的协议来运行的，接下来就看一下 I2C 协议。
+
+I2C 是支持多从机的，也就是一个 I2C 控制器下可以挂多个 I2C 从设备，这些不同的 I2C从设备有不同的器件地址，这样 I2C 主控制器就可以通过 I2C 设备的器件地址访问指定的 I2C设备了，一个 I2C 总线连接多个 I2C 设备如图所示：
+
+![alt](./images/Snipaste_2024-12-03_15-36-33.png)
+
+SDA 和 SCL 这两根线必须要接一个上拉电阻，一般是 4.7K。
+其余的 I2C 从器件都挂接到 SDA 和 SCL 这两根线上，这样就可以通过 SDA 和 SCL 这两根线来访问多个 I2C设备。
+
+接下来看一下 I2C 协议有关的术语：
+
+1. **起始位**
+
+顾名思义，也就是 I2C 通信起始标志，通过这个起始位就可以告诉 I2C 从机，“我”要开始进行 I2C 通信了。在 SCL 为高电平的时候，SDA 出现下降沿就表示为起始位。
+
+![alt](./images/Snipaste_2024-12-03_15-38-30.png)
+
+2. **停止位**
+
+停止位就是停止 I2C 通信的标志位，和起始位的功能相反。
+在 SCL 位高电平的时候，SDA出现上升沿就表示为停止位。
+
+![alt](./images/Snipaste_2024-12-03_15-39-23.png)
+
+3. **数据传输**
+
+I2C 总线在数据传输的时候要保证在 SCL 高电平期间，SDA 上的数据稳定，因此 SDA 上的数据变化只能在 SCL 低电平期间发生
+
+![alt](./images/Snipaste_2024-12-03_15-40-30.png)
+
+4. **应答信号**
+
+当 I2C 主机发送完 8 位数据以后会将 SDA 设置为输入状态，等待 I2C 从机应答，也就是等到 I2C 从机告诉主机它接收到数据了。
+应答信号是由从机发出的，主机需要提供应答信号所需的时钟，主机发送完 8 位数据以后紧跟着的一个时钟信号就是给应答信号使用的。
+从机通过将 SDA 拉低来表示发出应答信号，表示通信成功，否则表示通信失败。
+
+5. **IIC写时序**
+
+主机通过 I2C 总线与从机之间进行通信不外乎两个操作：写和读，I2C 总线单字节写时序如图：
+
+![alt](./images/Snipaste_2024-12-03_15-42-35.png)
+
+I2C 写时序，我们来看一下写时序的具体步骤：
+
+1、开始信号。
+
+2、发送 I2C 设备地址，每个 I2C 器件都有一个设备地址，通过发送具体的设备地址来决定访问哪个 I2C 器件。
+这是一个 8 位的数据，其中高 7 位是设备地址，最后 1 位是读写位，为1 的话表示这是一个读操作，为 0 的话表示这是一个写操作。
+
+3、 I2C 器件地址后面跟着一个读写位，为 0 表示写操作，为 1 表示读操作。
+
+4、从机发送的 ACK 应答信号。
+
+5、重新发送开始信号。
+
+6、发送要写写入数据的寄存器地址。
+
+7、从机发送的 ACK 应答信号。
+
+8、发送要写入寄存器的数据。
+
+9、从机发送的 ACK 应答信号。
+
+10、停止信号。
+
+6. **IIC读时序**
+
+I2C 总线单字节读时序如图所示：（指定地址读）
+
+![alt](./images/Snipaste_2024-12-03_15-50-21.png)
+
+I2C 单字节读时序比写时序要复杂一点，读时序分为 4 大步，第一步是发送设备地址，第二步是发送要读取的寄存器地址(移动寄存器指针位置)，第三步重新发送设备地址，最后一步就是 I2C 从器件输出要读取的寄存器值，我们具体来看一下这几步。
+
+1、主机发送起始信号。
+2、主机发送要读取的 I2C 从设备地址。
+3、读写控制位，因为是向 I2C 从设备发送数据，因此是写信号。
+4、从机发送的 ACK 应答信号。
+5、重新发送 START 信号。
+6、主机发送要读取的寄存器地址。
+7、从机发送的 ACK 应答信号。
+8、重新发送 START 信号。
+9、重新发送要读取的 I2C 从设备地址
+10、读写控制位，这里是读信号，表示接下来是从 I2C 从设备里面读取数据。
+11、从机发送的 ACK 应答信号。
+12、从 I2C 器件里面读取到的数据。
+13、主机发出 NO ACK 信号，表示读取完成，不需要从机再发送 ACK 信号了。
+14、主机发出 STOP 信号，停止 I2C 通信。
+
+7. **IIC多字节读写时序**
+
+有时候我们需要读写多个字节，多字节读写时序和单字节的基本一致，只是在读写数据的时候可以连续发送多个自己的数据，其他的控制时序都是和单字节一样的。
+
+主机接收完，发送应答信号ACK(拉低)，就继续接受后面的数据。
+如果不发送应答信号，保持为高，不接受数据了，从机不再发，主机直接STOP即可。
+
+IIC时序详情见STM32笔记
+
+#### 26.1.2 IMX6ULL IIC简介
+
+I.MX6U 提供了 4 个 I2C 外设，通过这四个 I2C 外设即可完成与 I2C 从器件进行通信，I.MX6U 的 I2C 外设特性如下：
+
+①、与标准 I2C 总线兼容。
+②、多主机运行
+③、软件可编程的 64 中不同的串行时钟序列。
+④、软件可选择的应答位。
+⑤、开始/结束信号生成和检测。
+⑥、重复开始信号生成。
+⑦、确认位生成。
+⑧、总线忙检测
+
+I.MX6U 的 I2C 支持两种模式：标准模式和快速模式，标准模式下 I2C 数据传输速率最高是 100Kbits/s，在快速模式下数据传输速率最高为 400Kbits/s。
+
+我们接下来看一下 I2C 的几个重要的寄存器，首先看一下 I2Cx_IADR(x=1~4)寄存器，这是I2C 的地址寄存器，此寄存器结构如图：
+
+<span style="color:red"><b> I2Cx_IADR </b></span>
+
+![alt](./images/Snipaste_2024-12-03_15-58-59.png)
+
+寄存器 I2Cx_IADR 只有 ADR(bit7:1)位有效，用来保存 I2C 从设备地址数据。当我们要访问某个 I2C 从设备的时候就需要将其设备地址写入到 ADR 里面。
+
+接下来看一下寄存器I2Cx_IFDR，这个是 I2C 的分频寄存器，寄存器结构如图
+
+<span style="color:red"><b> I2Cx_IFDR </b></span>
+
+![alt](./images/Snipaste_2024-12-03_16-00-52.png)
+
+寄存器 I2Cx_IFDR 也只有 IC(bit5:0)这个位，用来设置 I2C 的波特率，I2C 的时钟源可以选择 IPG_CLK_ROOT=66MHz，通过设置 IC 位既可以得到想要的 I2C 波特率。
+IC 位可选的设置如图所示：
+
+![alt](./images/Snipaste_2024-12-03_16-01-54.png)
+
+不像其他外设的分频设置一样可以随意设置，图中列出了 IC 的所有可选值。
+比如现在I2C的时钟源为66MHz，我们要设置I2C的波特率为100KHz，那么IC就可以设置为0X15，也就是 640 分频。66000000/640=103.125KHz≈100KHz。
+
+IIC的时钟配置
+![alt](./images/Snipaste_2024-12-03_16-04-58.png)
+
+接下来看一下寄存器 I2Cx_I2CR，这个是 I2C 控制寄存器
+
+<span style="color:red"><b> I2Cx_I2CR </b></span>
+
+![alt](./images/Snipaste_2024-12-03_16-05-49.png)
+
+IEN(bit7)：I2C 使能位，为 1 的时候使能 I2C，为 0 的时候关闭 I2C。
+
+IIEN(bit6)：I2C 中断使能位，为 1 的时候使能 I2C 中断，为 0 的时候关闭 I2C 中断。
+
+MSTA(bit5)：主从模式选择位，设置 IIC 工作在主模式还是从模式，为 1 的时候工作在主模式，为 0 的时候工作在从模式。
+
+MTX(bit4)：传输方向选择位，用来设置是进行发送还是接收，为 0 的时候是接收，为 1 的时候是发送。
+
+TXAK(bit3)：传输应答位使能，为 0 的话发送 ACK 信号，为 1 的话发送 NO ACK 信号。
+
+RSTA(bit2)：重复开始信号，为 1 的话产生一个重新开始信号。
+
+接下来看一下寄存器 I2Cx_I2SR，这个是 I2C 的状态寄存器
+
+<span style="color:red"><b> I2Cx_I2SR </b></span>
+
+![alt](./images/Snipaste_2024-12-03_16-08-03.png)
+
+ICF(bit7)：数据传输状态位，为 0 的时候表示数据正在传输，为 1 的时候表示数据传输完成。
+
+IAAS(bit6)：当为 1 的时候表示 I2C 地址，也就是 I2Cx_IADR 寄存器中的地址是从设备地址。
+
+IBB(bit5)：I2C 总线忙标志位，当为 0 的时候表示 I2C 总线空闲，为 1 的时候表示 I2C 总线忙。
+
+IAL(bit4)：仲裁丢失位，为 1 的时候表示发生仲裁丢失。
+
+SRW(bit2)：从机读写状态位，当 I2C 作为从机的时候使用，此位用来表明主机发送给从机的是读还是写命令。为 0 的时候表示主机要向从机写数据，为 1 的时候表示主机要从从机读取数据。
+
+IIF(bit1)：I2C 中断挂起标志位，当为 1 的时候表示有中断挂起，此位需要软件清零。
+
+RXAK(bit0)：应答信号标志位，为 0 的时候表示接收到 ACK 应答信号，为 1 的话表示检测到 NO ACK 信号。
+
+<span style="color:red"><b> I2Cx_I2DR </b></span>
+
+最后一个寄存器就是 I2Cx_I2DR，这是 I2C 的数据寄存器，此寄存器只有低 8 位有效，当要发送数据的时候将要发送的数据写入到此寄存器，如果要接收数据的话直接读取此寄存器即可得到接收到的数据。
+
+关于 I2C 的寄存器就介绍到这里，关于这些寄存器详细的描述，请参考《I.MX6ULL 参考手册》第 1462 页的 31.7 小节。
+
+#### 26.1.3 AP3216C 简介
+
+I.MX6U-ALPHA 开发板上通过 I2C1 连接了一个三合一环境传感器：AP3216C，AP3216C是由敦南科技推出的一款传感器，其支持环境光强度(ALS)、接近距离(PS)和红外线强度(IR)这三个环境参数检测。
+
+该芯片可以通过 IIC 接口与主控制相连，并且支持中断，AP3216C 的特点如下：
+
+①、I2C 接口，快速模式下波特率可以到 400Kbit/S
+②、多种工作模式选择：ALS、PS+IR、ALS+PS+IR、PD 等等。
+③、内建温度补偿电路。
+④、宽工作温度范围(-30°C ~ +80°C)。
+⑤、超小封装，4.1mm x 2.4mm x 1.35mm
+⑥、环境光传感器具有 16 位分辨率。
+⑦、接近传感器和红外传感器具有 10 位分辨率。
+
+AP3216C 常被用于手机、平板、导航设备等，其内置的接近传感器可以用于检测是否有物体接近，比如手机上用来检测耳朵是否接触听筒，如果检测到的话就表示正在打电话，手机就会关闭手机屏幕以省电。
+也可以使用环境光传感器检测光照强度，可以实现自动背光亮度调节。
+
+AP3216C结构如图：
+
+![alt](./images/Snipaste_2024-12-03_16-12-45.png)
+
+AP3216 的设备地址为 0X1E，同几乎所有的 I2C 从器件一样，AP3216C 内部也有一些寄存器，通过这些寄存器我们可以配置 AP3216C 的工作模式，并且读取相应的数据。
+AP3216C 我们用的寄存器如表所示：
+
+![alt](./images/Snipaste_2024-12-03_16-14-15.png)
+
+0X00 这个寄存器是模式控制寄存器，用来设置 AP3216C 的工作模式，一般开始先将其设置为 0X04，也就是先软件复位一次 AP3216C。
+
+接下来根据实际使用情况选择合适的工作模式，比如设置为 0X03，也就是开启 ALS+PS+IR.
+
+从 0X0A~0X0F 这 6 个寄存器就是数据寄存器，保存着 ALS、PS 和 IR 这三个传感器获取到的数据值。
+如果同时打开 ALS、PS 和 IR 则读取间隔最少要 112.5ms，因为 AP3216C 完成一次转换需要 112.5ms。
+
+关于 AP3216C的介绍就到这里，如果要想详细的研究此芯片的话，请大家自行查阅其数据手册。
+<span style="color:blue"> 英文阅读以及数据手册文档阅读 </span>
+
+本章实验中我们通过 I.MX6U 的 I2C1 来读取 AP3216C 内部的 ALS、PS 和 IR 这三个传感器的值，并且在 LCD 上显示。
+开机会先检测 AP3216C 是否存在，一般的芯片是有个 ID 寄存器，通过读取 ID 寄存器判断 ID 是否正确就可以检测芯片是否存在。
+但是 AP3216C 没有 ID 寄存器，所以我们就通过向寄存器 0X00 写入一个值，然后再读取 0X00 寄存器，判断读出得到值和写入的是否相等，如果相等就表示 AP3216C 存在，否则的话 AP3216C 就不存在。
+
+本章配置如下：
+
+1. **初始化相应的IO设备**
+
+初始化 I2C1 相应的 IO，设置其复用功能，如果要使用 AP3216C 中断功能的话，还需要设置 AP3216C 的中断 IO。
+
+2. **初始化IIC1**
+
+初始化 I2C1 接口，设置波特率。
+
+3. **初始化AP3216C**
+
+初始化 AP3216C，读取 AP3216C 的数据。
+
+### 26.2 硬件原理分析
+
+本试验用到的资源如下：
+①、指示灯 LED0。
+②、RGB LCD 屏幕。
+③、AP3216C
+④、串口
+
+![alt](./images/Snipaste_2024-12-03_16-21-14.png)
+
+AP3216C 使用的是 I2C1，其中 I2C1_SCL 使用的 UART4_TXD 这个IO、I2C1_SDA 使用的是 UART4_R XD 这个 IO。
+
+### 26.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 17_i2c。
+
+本章实验在上一章例程的基础上完成，更改工程名字为“ap3216c”，然后在 bsp 文件夹下创建名为“i2c”和“ap3216c”的文件夹。
+在 bsp/i2c 中新建 bsp_i2c.c 和 bsp_i2c.h 这两个文件
+在 bsp/ap3216c 中新建 bsp_ap3216c.c 和 bsp_ap3216c.h两个文件。
+bsp_i2c.c 和 bsp_i2c.h 是I.MX6U 的 I2C 文件，bsp_ap3216c.c 和 bsp_ap3216c.h 是 AP3216C 的驱动文件。
+
+```C
+bsp_i2c.h
+
+1  #ifndef _BSP_I2C_H
+2  #define _BSP_I2C_H
+3  /***************************************************************
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5  文件名 : bsp_i2c.h
+6  作者 : 左忠凯
+7  版本 : V1.0
+8  描述 : IIC 驱动文件。
+9  其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/15 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14
+15 /* 相关宏定义 */
+16 #define I2C_STATUS_OK    (0)
+17 #define I2C_STATUS_BUSY  (1)
+18 #define I2C_STATUS_IDLE  (2)
+19 #define I2C_STATUS_NAK   (3)
+20 #define I2C_STATUS_ARBITRATIONLOST (4)
+21 #define I2C_STATUS_TIMEOUT   (5)
+22 #define I2C_STATUS_ADDRNAK   (6)
+23
+24 /*
+25  * I2C 方向枚举类型
+26  */
+27 enum i2c_direction
+28 {
+29  kI2C_Write = 0x0, /* 主机向从机写数据 */
+30  kI2C_Read = 0x1, /* 主机从从机读数据 */
+31 };
+32
+33 /*
+34  * 主机传输结构体
+35  */
+36 struct i2c_transfer
+37 {
+38  unsigned char slaveAddress; /* 7 位从机地址 */
+39  enum i2c_direction direction; /* 传输方向 */
+40  unsigned int subaddress; /* 寄存器地址 */
+41  unsigned char subaddressSize; /* 寄存器地址长度 */
+42  unsigned char *volatile data; /* 数据缓冲区 */
+43  volatile unsigned int dataSize; /* 数据缓冲区长度 */
+44 };
+45
+46 /*
+47  *函数声明
+48  */
+49 void i2c_init(I2C_Type *base);
+50 unsigned char i2c_master_start(I2C_Type *base,
+                            unsigned char address,
+                            enum i2c_direction direction);
+51 unsigned char i2c_master_repeated_start(I2C_Type *base,
+                            unsigned char address,
+                            enum i2c_direction direction);
+52 unsigned char i2c_check_and_clear_error(I2C_Type *base,
+                            unsigned int status);
+53 unsigned char i2c_master_stop(I2C_Type *base);
+54 void i2c_master_write(I2C_Type *base,
+                        const unsigned char *buf,
+                        unsigned int size);
+55 void i2c_master_read(I2C_Type *base, 
+                        unsigned char *buf,
+                        unsigned int size);
+56 unsigned char i2c_master_transfer(I2C_Type *base,
+                        struct i2c_transfer *xfer);
+57
+58 #endif
+```
+第16到22行定义了一些I2C状态相关的宏。
+第27到31行定义了一个枚举类型i2c_direction，此枚举类型用来表示 I2C 主机对从机的操作，也就是读数据还是写数据。
+第 36 到 44 行定义了一个结构体 i2c_transfer，此结构体用于 I2C 的数据传输。剩下的就是一些函数声明了，总体来说 bsp_i2c.h 文件里面的内容还是很简单的。
+
+```C
+***************************************************************/
+1  #include "bsp_i2c.h"
+2  #include "bsp_delay.h"
+3  #include "stdio.h"
+4
+5 /*
+6  * @description : 初始化 I2C，波特率 100KHZ
+7  * @param – base : 要初始化的 IIC 设置
+8  * @return : 无
+9  */
+10 void i2c_init(I2C_Type *base)
+11 {
+12      /* 1、配置 I2C */
+13      base->I2CR &= ~(1 << 7); /* 要访问 I2C 的寄存器，首先需要先关闭 I2C */
+14
+15      /* 设置波特率为 100K
+16       * I2C 的时钟源来源于 IPG_CLK_ROOT=66Mhz
+17       * IFDR 设置为 0X15，也就是 640 分频，
+18       * 66000000/640=103.125KHz≈100KHz。
+19       */
+20      base->IFDR = 0X15 << 0;
+21 
+22      /* 设置寄存器 I2CR，开启 I2C */
+23      base->I2CR |= (1<<7);
+24 }
+25
+26 /*
+27  * @description : 发送重新开始信号
+28  * @param - base : 要使用的 IIC
+29  * @param - addrss : 设备地址
+30  * @param - direction : 方向
+31  * @return : 0 正常 其他值 出错
+32  */
+33 unsigned char i2c_master_repeated_start(I2C_Type *base,
+                                    unsigned char address,
+                            enum i2c_direction direction)
+34 {
+35      /* I2C 忙并且工作在从模式,跳出 */
+36      if(base->I2SR & (1 << 5) && (((base->I2CR) & (1 << 5)) == 0))
+37      return 1;
+38
+39      /*
+40      * 设置寄存器 I2CR
+41      * bit[4]: 1 发送
+42      * bit[2]: 1 产生重新开始信号
+43      */
+44      base->I2CR |= (1 << 4) | (1 << 2);
+45
+46      /*
+47       * 设置寄存器 I2DR，bit[7:0] : 要发送的数据，这里写入从设备地址
+48       */
+49      base->I2DR = ((unsigned int)address << 1) |         
+                    ((direction == kI2C_Read)? 1 : 0);
+50      return 0;
+51 }
+52
+53 /*
+54  * @description : 发送开始信号
+55  * @param - base : 要使用的 IIC
+56  * @param - addrss : 设备地址
+57  * @param - direction : 方向
+58  * @return : 0 正常 其他值 出错
+59  */
+60 unsigned char i2c_master_start(I2C_Type *base,
+                                unsigned char address,
+                                enum i2c_direction direction)
+61 {
+62      if(base->I2SR & (1 << 5)) /* I2C 忙 */
+63          return 1;
+64
+65      /*
+66       * 设置寄存器 I2CR
+67       * bit[5]: 1 主模式
+68       * bit[4]: 1 发送
+69       */
+70      base->I2CR |= (1 << 5) | (1 << 4);
+71
+72      /*
+73       * 设置寄存器 I2DR，bit[7:0] : 要发送的数据，这里写入从设备地址
+74       */
+75      base->I2DR = ((unsigned int)address << 1) |
+                    ((direction == kI2C_Read)? 1 : 0);
+76      return 0;
+77 }
+78
+79 /*
+80  * @description : 检查并清除错误
+81  * @param - base : 要使用的 IIC
+82  * @param - status : 状态
+83  * @return : 状态结果
+84  */
+85 unsigned char i2c_check_and_clear_error(I2C_Type *base,
+                                            unsigned int status)
+86 {
+87  if(status & (1<<4)) /* 检查是否发生仲裁丢失错误 */
+88  {
+89      base->I2SR &= ~(1<<4); /* 清除仲裁丢失错误位 */
+90      base->I2CR &= ~(1 << 7); /* 先关闭 I2C */
+91      base->I2CR |= (1 << 7); /* 重新打开 I2C */
+92      return I2C_STATUS_ARBITRATIONLOST;
+93  }
+94  else if(status & (1 << 0)) /* 没有接收到从机的应答信号 */
+95  {
+96      return I2C_STATUS_NAK; /* 返回 NAK(No acknowledge) */
+97  }
+98      return I2C_STATUS_OK;
+99 }
+100
+101 /*
+102  * @description : 停止信号
+103  * @param - base : 要使用的 IIC
+104  * @param : 无
+105  * @return : 状态结果
+106  */
+107  unsigned char i2c_master_stop(I2C_Type *base)
+108  {
+109     unsigned short timeout = 0XFFFF;
+110
+111     /* 清除 I2CR 的 bit[5:3]这三位 */
+112     base->I2CR &= ~((1 << 5) | (1 << 4) | (1 << 3));
+113     while((base->I2SR & (1 << 5))) /* 等待忙结束 */
+114     {
+115         timeout--;
+116         if(timeout == 0) /* 超时跳出 */
+117         return I2C_STATUS_TIMEOUT;
+118     }
+119         return I2C_STATUS_OK;
+120  }
+121
+122 /*
+123  * @description : 发送数据
+124  * @param - base : 要使用的 IIC
+125  * @param - buf : 要发送的数据
+126  * @param - size : 要发送的数据大小
+127  * @param - flags : 标志
+128  * @return : 无
+129  */
+130 void i2c_master_write(I2C_Type *base, const unsigned char *buf,
+                                                unsigned int size)
+131 {
+132     while(!(base->I2SR & (1 << 7))); /* 等待传输完成 */
+133     base->I2SR &= ~(1 << 1); /* 清除标志位 */
+134     base->I2CR |= 1 << 4; /* 发送数据 */
+135     while(size--)
+136     {
+137         base->I2DR = *buf++; /* 将 buf 中的数据写入到 I2DR 寄存器 */
+138         while(!(base->I2SR & (1 << 1))); /* 等待传输完成 */
+139         base->I2SR &= ~(1 << 1); /* 清除标志位 */
+140
+141         /* 检查 ACK */
+142         if(i2c_check_and_clear_error(base, base->I2SR))
+143             break;
+144     }
+145     base->I2SR &= ~(1 << 1);
+146     i2c_master_stop(base); /* 发送停止信号 */
+147 }
+148
+149 /*
+150  * @description : 读取数据
+151  * @param - base : 要使用的 IIC
+152  * @param - buf : 读取到数据
+153  * @param - size : 要读取的数据大小
+154  * @return : 无
+155  */
+156  void i2c_master_read(I2C_Type *base, unsigned char *buf,
+                                            unsigned int size)
+157 {
+158     volatile uint8_t dummy = 0;
+159
+160     dummy++; /* 防止编译报错 */
+161     while(!(base->I2SR & (1 << 7))); /* 等待传输完成 */
+162     base->I2SR &= ~(1 << 1); /* 清除中断挂起位 */
+163     base->I2CR &= ~((1 << 4) | (1 << 3)); /* 接收数据 */
+164     if(size == 1) /* 如果只接收一个字节数据的话发送 NACK 信号 */
+165         base->I2CR |= (1 << 3);
+166
+167     dummy = base->I2DR; /* 假读 */
+168     while(size--)
+169     {
+170         while(!(base->I2SR & (1 << 1))); /* 等待传输完成 */
+171         base->I2SR &= ~(1 << 1); /* 清除标志位 */
+172
+173         if(size == 0)
+174             i2c_master_stop(base); /* 发送停止信号 */
+175         if(size == 1)
+176             base->I2CR |= (1 << 3);
+177         *buf++ = base->I2DR;
+178     }
+179 }
+180
+181 /*
+182  * @description : I2C 数据传输，包括读和写
+183  * @param – base : 要使用的 IIC
+184  * @param – xfer : 传输结构体
+185  * @return : 传输结果,0 成功，其他值 失败;
+186  */
+187 unsigned char i2c_master_transfer(I2C_Type *base,
+                            struct i2c_transfer *xfer)
+188 {
+189     unsigned char ret = 0;
+190     enum i2c_direction direction = xfer->direction;
+191
+192     base->I2SR &= ~((1 << 1) | (1 << 4)); /* 清除标志位 */
+193     while(!((base->I2SR >> 7) & 0X1)){}; /* 等待传输完成 */
+194     /* 如果是读的话，要先发送寄存器地址，所以要先将方向改为写 */
+195     if ((xfer->subaddressSize > 0) && (xfer->direction ==
+                                                    kI2C_Read))
+196         direction = kI2C_Write;
+197         ret = i2c_master_start(base, xfer->slaveAddress, direction);
+198     if(ret)
+199         return ret;
+200     while(!(base->I2SR & (1 << 1))){}; /* 等待传输完成 */
+201         ret = i2c_check_and_clear_error(base, base->I2SR);
+202     if(ret)
+203     {
+204         i2c_master_stop(base); /* 发送出错，发送停止信号 */
+205         return ret;
+206     }
+207 
+208     /* 发送寄存器地址 */
+209     if(xfer->subaddressSize)
+210     {
+211         do
+212         {
+213             base->I2SR &= ~(1 << 1); /* 清除标志位 */
+214             xfer->subaddressSize--; /* 地址长度减一 */
+215             base->I2DR = ((xfer->subaddress) >> (8 *
+                                xfer->subaddressSize));
+216         while(!(base->I2SR & (1 << 1))); /* 等待传输完成 */
+217         /* 检查是否有错误发生 */
+218         ret = i2c_check_and_clear_error(base, base->I2SR);
+219         if(ret)
+220         {
+221             i2c_master_stop(base); /* 发送停止信号 */
+222             return ret;
+223         }
+224         } while ((xfer->subaddressSize > 0) && 
+                            (ret ==I2C_STATUS_OK));
+225
+226         if(xfer->direction == kI2C_Read) /* 读取数据 */
+227         {
+228             base->I2SR &= ~(1 << 1); /* 清除中断挂起位 */
+229             i2c_master_repeated_start(base, xfer->slaveAddress,kI2C_Read);
+230             while(!(base->I2SR & (1 << 1))){}; /* 等待传输完成 */
+231
+232             /* 检查是否有错误发生 */
+233             ret = i2c_check_and_clear_error(base, base->I2SR);
+234             if(ret)
+235             {
+236                 ret = I2C_STATUS_ADDRNAK;
+237                 i2c_master_stop(base); /* 发送停止信号 */
+238                 return ret;
+239             }
+240         }
+241     }
+242
+243     /* 发送数据 */
+244     if ((xfer->direction == kI2C_Write) && (xfer->dataSize > 0))
+245         i2c_master_write(base, xfer->data, xfer->dataSize);
+246     /* 读取数据 */
+247     if ((xfer->direction == kI2C_Read) && (xfer->dataSize > 0))
+248         i2c_master_read(base, xfer->data, xfer->dataSize);
+249     return 0;
+250 }
+```
+文件bsp_i2c.c中一共有8个函数，我们依次来看一下这些函数的功能.
+首先是函数i2c_init，此函数用来初始化 I2C，重点是设置 I2C 的波特率，初始化完成以后开启 I2C。
+第 2 个函数是i2c_master_repeated_start，此函数用来发送一个重复开始信号，发送开始信号的时候也会顺带发送从设备地址。
+第 3 个函数是 i2c_master_start，此函数用于发送一个开始信号，发送开始信号的时候也顺带发送从设备地址。
+第 4 个函数是 i2c_check_and_clear_error，此函数用于检查并清除错误。
+第 5 个函数是 i2c_master_stop，用于产生一个停止信号。
+第 6 和第 7 个函数分别为i2c_master_write 和 i2c_master_read，这两个函数分别用于完成向 I2C 从设备写数据和从 I2C 从设备读数据。
+最后一个函数是 i2c_master_transfer，此函数就是用户最终调用的，用于完成 I2C通信的函数，此函数会使用前面的函数拼凑出 I2C 读/写时序。
+此函数就是按照 26.1.1 小节讲解的 I2C 读写时序来编写的。
+
+I2C 的操作函数已经准备好了，接下来就是使用前面编写 I2C 操作函数来配置 AP3216C 了
+```C
+bsp_ap3216c.h
+1  #ifndef _BSP_AP3216C_H
+2  #define _BSP_AP3216C_H
+3  /***************************************************************
+4  Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5  文件名 : bsp_ap3216c.h
+6  作者 : 左忠凯
+7  版本 : V1.0
+8  描述 : AP3216C 驱动头文件。
+9  其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/3/26 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14
+15 #define AP3216C_ADDR 0X1E /* AP3216C 器件地址 */
+16
+17 /* AP3316C 寄存器 */
+18 #define AP3216C_SYSTEMCONG 0x00 /* 配置寄存器 */
+19 #define AP3216C_INTSTATUS 0X01 /* 中断状态寄存器 */
+20 #define AP3216C_INTCLEAR 0X02 /* 中断清除寄存器 */
+21 #define AP3216C_IRDATALOW 0x0A /* IR 数据低字节 */
+22 #define AP3216C_IRDATAHIGH 0x0B /* IR 数据高字节 */
+23 #define AP3216C_ALSDATALOW 0x0C /* ALS 数据低字节 */
+24 #define AP3216C_ALSDATAHIGH 0X0D /* ALS 数据高字节 */
+25 #define AP3216C_PSDATALOW 0X0E /* PS 数据低字节 */
+26 #define AP3216C_PSDATAHIGH 0X0F /* PS 数据高字节 */
+27
+28 /* 函数声明 */
+29 unsigned char ap3216c_init(void);
+30 unsigned char ap3216c_readonebyte(unsigned char addr,
+                                    unsigned char reg);
+31 unsigned char ap3216c_writeonebyte(unsigned char addr,
+                                    unsigned char reg,
+                                    unsigned char data);
+32 void ap3216c_readdata(unsigned short *ir, unsigned short *ps,
+                                    unsigned short *als);
+33
+34 #endif
+```
+定义了一些宏，分别为 AP3216C 的设备地址和寄存器地址，剩下的就是函数声明。
+
+```C
+bsp_ap3216c.c
+1 #include "bsp_ap3216c.h"
+2 #include "bsp_i2c.h"
+3 #include "bsp_delay.h"
+4 #include "cc.h"
+5 #include "stdio.h"
+6
+7 /*
+8  * @description : 初始化 AP3216C
+9  * @param : 无
+10 * @return : 0 成功，其他值 错误代码
+11 */
+12 unsigned char ap3216c_init(void)
+13 {
+14  unsigned char data = 0;
+15
+16  /* 1、IO 初始化，配置 I2C IO 属性
+17   * I2C1_SCL -> UART4_TXD
+18   * I2C1_SDA -> UART4_RXD
+19   */
+20   IOMUXC_SetPinMux(IOMUXC_UART4_TX_DATA_I2C1_SCL, 1);
+21   IOMUXC_SetPinMux(IOMUXC_UART4_RX_DATA_I2C1_SDA, 1);
+22   IOMUXC_SetPinConfig(IOMUXC_UART4_TX_DATA_I2C1_SCL, 0x70B0);
+23   IOMUXC_SetPinConfig(IOMUXC_UART4_RX_DATA_I2C1_SDA, 0X70B0);
+24
+25   /* 2、初始化 I2C1 */
+26   i2c_init(I2C1);
+27
+28   /* 3、初始化 AP3216C */
+29   /* 复位 AP3216C */
+30   ap3216c_writeonebyte(AP3216C_ADDR, AP3216C_SYSTEMCONG, 0X04);
+31   delayms(50); /* AP33216C 复位至少 10ms */
+32
+33   /* 开启 ALS、PS+IR */
+34   ap3216c_writeonebyte(AP3216C_ADDR, AP3216C_SYSTEMCONG, 0X03);
+35
+36   /* 读取刚刚写进去的 0X03 */
+37   data = ap3216c_readonebyte(AP3216C_ADDR, AP3216C_SYSTEMCONG);
+38   if(data == 0X03)
+39      return 0; /* AP3216C 正常 */
+40   else
+41      return 1; /* AP3216C 失败 */
+42 }
+43
+44 /*
+45  * @description : 向 AP3216C 写入数据
+46  * @param – addr : 设备地址
+47  * @param - reg : 要写入的寄存器
+48  * @param – data : 要写入的数据
+49  * @return : 操作结果
+50  */
+51 unsigned char ap3216c_writeonebyte(unsigned char addr,
+                                        unsigned char reg,
+                                        unsigned char data)
+52 {
+53      unsigned char status=0;
+54      unsigned char writedata=data;
+55      struct i2c_transfer masterXfer;
+56
+57      /* 配置 I2C xfer 结构体 */
+58      masterXfer.slaveAddress = addr; /* 设备地址 */
+59      masterXfer.direction = kI2C_Write; /* 写入数据 */
+60      masterXfer.subaddress = reg; /* 要写入的寄存器地址 */
+61      masterXfer.subaddressSize = 1; /* 地址长度一个字节 */
+62      masterXfer.data = &writedata; /* 要写入的数据 */
+63      masterXfer.dataSize = 1; /* 写入数据长度 1 个字节 */
+64      
+65      if(i2c_master_transfer(I2C1, &masterXfer))
+66          status=1;
+67
+68      return status;
+69 }
+70
+71 /*
+72  * @description : 从 AP3216C 读取一个字节的数据
+73  * @param – addr : 设备地址
+74  * @param - reg : 要读取的寄存器
+75  * @return : 读取到的数据。
+76  */
+77 unsigned char ap3216c_readonebyte(unsigned char addr,
+                                    unsigned char reg)
+78 {
+79  unsigned char val=0;
+80
+81  struct i2c_transfer masterXfer;
+82  masterXfer.slaveAddress = addr; /* 设备地址 */
+83  masterXfer.direction = kI2C_Read; /* 读取数据 */
+84  masterXfer.subaddress = reg; /* 要读取的寄存器地址 */
+85  masterXfer.subaddressSize = 1; /* 地址长度一个字节 */
+86  masterXfer.data = &val; /* 接收数据缓冲区 */
+87  masterXfer.dataSize = 1; /* 读取数据长度 1 个字节 */
+88  i2c_master_transfer(I2C1, &masterXfer);
+89
+90  return val;
+91 }
+92
+93 /*
+94  * @description : 读取 AP3216C 的原始数据，包括 ALS,PS 和 IR, 注意！如果
+95  * :同时打开 ALS,IR+PS 两次数据读取的时间间隔要大于 112.5ms
+96  * @param - ir : ir 数据
+97  * @param - ps : ps 数据
+98  * @param - ps : als 数据
+99  * @return : 无。
+100 */
+101 void ap3216c_readdata(unsigned short *ir, unsigned short *ps,
+                                            unsigned short *als)
+102 {
+103     unsigned char buf[6];
+104     unsigned char i;
+105
+106     /* 循环读取所有传感器数据 */
+107     for(i = 0; i < 6; i++)
+108     {
+109         buf[i] = ap3216c_readonebyte(AP3216C_ADDR,AP3216C_IRDATALOW + i);
+110     }
+111
+112     if(buf[0] & 0X80) /* IR_OF 位为 1,则数据无效 */
+113         *ir = 0;
+114     else /* 读取 IR 传感器的数据 */
+115         *ir = ((unsigned short)buf[1] << 2) | (buf[0] & 0X03);
+116
+117         *als = ((unsigned short)buf[3] << 8) | buf[2];/* 读取 ALS 数据 */
+118 
+119     if(buf[4] & 0x40) /* IR_OF 位为 1,则数据无效 */
+120         *ps = 0;
+121     else /* 读取 PS 传感器的数据 */
+122         *ps = ((unsigned short)(buf[5] & 0X3F) << 4) |(buf[4] & 0X0F);
+123 }
+```
+第 1 个函数是 ap3216c_init，顾名思义，此函数用于初始化 AP3216C，初始化成功的话返回 0，如果初始化失败就返回其他值。
+此函数先初始化所使用到的 IO，比如初始化 I2C1 的相关 IO，并设置其复用为 I2C1。
+然后此函数会调用 i2c_init来初始化 I2C1，最后初始化 AP3216C。
+
+第 2 个和第 3 个函数分别为 ap3216c_writeonebyte 和ap3216c_readonebyte，这两个函数分别是向 AP3216C 写入数据和从 AP3216C 读取数据。
+这两个函数都通过调用 bsp_i2c.c 中的函数 i2c_master_transfer 来完成对 AP3216C 的读写。
+最后一个函数就是 ap3216c_readdata，此函数用于读取 AP3216C 中的 ALS、PS 和 IR 传感器数据。
+
+最后是main.c程序编写
+```C
+1  #include "bsp_clk.h"
+2  #include "bsp_delay.h"
+3  #include "bsp_led.h"
+4  #include "bsp_beep.h"
+5  #include "bsp_key.h"
+6  #include "bsp_int.h"
+7  #include "bsp_uart.h"
+8  #include "bsp_lcd.h"
+9  #include "bsp_rtc.h"
+10 #include "bsp_ap3216c.h"
+11 #include "stdio.h"
+12
+13 /*
+14  * @description : main 函数
+15  * @param : 无
+16  * @return : 无
+17 */
+18 int main(void)
+19 {
+20  unsigned short ir, als, ps;
+21  unsigned char state = OFF;
+22
+23  int_init(); /* 初始化中断(一定要最先调用！) */
+24  imx6u_clkinit(); /* 初始化系统时钟 */
+25  delay_init(); /* 初始化延时 */
+26  clk_enable(); /* 使能所有的时钟 */
+27  led_init(); /* 初始化 led */
+28  beep_init(); /* 初始化 beep */
+29  uart_init(); /* 初始化串口，波特率 115200 */
+30  lcd_init(); /* 初始化 LCD */
+31
+32  tftlcd_dev.forecolor = LCD_RED;
+33  lcd_show_string(30, 50, 200, 16, 16,(char*)"ALPHA-IMX6U IIC TEST");
+34  lcd_show_string(30, 70, 200, 16, 16, (char*)"AP3216C TEST");
+35  lcd_show_string(30, 90, 200, 16, 16, (char*)"ATOM@ALIENTEK");
+36  lcd_show_string(30, 110, 200, 16, 16, (char*)"2019/3/26");
+37 
+38  while(ap3216c_init()) /* 检测不到 AP3216C */
+39  {
+40  lcd_show_string(30, 130, 200, 16, 16,(char*)"AP3216C Check Failed!");
+41  delayms(500);
+42  lcd_show_string(30, 130, 200, 16, 16,(char*)"Please Check! ");
+43  delayms(500);
+44  } 
+45
+46  lcd_show_string(30, 130, 200, 16, 16, (char*)"AP3216C Ready!");
+47  lcd_show_string(30, 160, 200, 16, 16, (char*)" IR:");
+48  lcd_show_string(30, 180, 200, 16, 16, (char*)" PS:");
+49  lcd_show_string(30, 200, 200, 16, 16, (char*)"ALS:");
+50  tftlcd_dev.forecolor = LCD_BLUE; 
+51 while(1)
+52 {
+53  ap3216c_readdata(&ir, &ps, &als); /* 读取数据 */
+54  lcd_shownum(30 + 32, 160, ir, 5, 16); /* 显示 IR 数据 */
+55  lcd_shownum(30 + 32, 180, ps, 5, 16); /* 显示 PS 数据 */
+56  lcd_shownum(30 + 32, 200, als, 5, 16); /* 显示 ALS 数据 */
+57  delayms(120);//两次读取数据之间延迟120ms
+58  state = !state;
+59  led_switch(LED0,state);
+60 }
+61  return 0;
+62 }
+```
+调用 ap3216c_init 来初始化 AP3216C，如果 AP3216C 初始化失败的话就会进入循环，会在 LCD 上不断的闪烁字符串“AP3216C Check Failed!”和“Please Check!”，直到 AP3216C初始化成功。
+
+第 53 行调用函数 ap3216c_readdata 来获取 AP3216C 的 ALS、PS 和 IR 传感器数据值，获取完成以后就会在 LCD 上显示出来。
+文件 main.c 里面的内容总体上还是很简单的，实验程序的编写就到这里。
+
+### 26.4 编译下载
+
+修改 Makefile 中的 TARGET 为 ap3216c，然后在在 INCDIRS 和 SRCDIRS 中加入“bsp/i2c”和“bsp/ap3216c”
+
+lds保持不变
+
+下载到SD卡运行即可
+
+由于本开发板用的mini版本，故而购买第三方模块完成此实验！
+
+## 第二十七章 SPI通信
+
+同 I2C 一样，SPI 是很常用的通信接口，也可以通过 SPI 来连接众多的传感器。
+相比 I2C 接口，SPI 接口的通信速度很快，I2C 最多 400KHz，但是 SPI 可以到达几十 MHz。
+I.MX6U 也有4 个 SPI 接口，可以通过这 4 个 SPI 接口来连接一些 SPI 外设。
+I.MX6U-ALPHA 使用 SPI3 接口连接了一个六轴传感器 ICM-20608，本章我们就来学习如何使用 I.MX6U 的 SPI 接口来驱动ICM-20608，读取 ICM-20608 的六轴数据。
+
+### 27.1 SPI&ICM-20608简介
+
+#### 27.1.1 SPI简介
+
+上一章我们讲解了 I2C，I2C 是串行通信的一种，只需要两根线就可以完成主机和从机之间的通信，但是 I2C 的速度最高只能到 400KHz，如果对于访问速度要求比价高的话 I2C 就不适合了。
+本章我们就来学习一下另外一个和 I2C 一样广泛使用的串行通信：SPI，SPI 全称是 Serial Perripheral Interface，也就是串行外围设备接口。
+SPI 是 Motorola 公司推出的一种同步串行接口技术，是一种高速、全双工的同步通信总线，SPI 时钟频率相比 I2C 要高很多，最高可以工作在上百 MHz。
+SPI 以主从方式工作，通常是有一个主设备和一个或多个从设备，一般 SPI 需要4 根线，但是也可以使用三根线(单向传输)。
+本章我们讲解标准的 4 线 SPI，这四根线如下：
+
+①、**CS/SS，Slave Select/Chip Select**，这个是片选信号线，用于选择需要进行通信的从设备。
+I2C 主机是通过发送从机设备地址来选择需要进行通信的从机设备的，SPI 主机不需要发送从机设备，直接将相应的从机设备片选信号拉低即可。
+
+②、**SCK，Serial Clock**，串行时钟，和 I2C 的 SCL 一样，为 SPI 通信提供时钟。
+
+③、**MOSI/SDO，Master Out Slave In/Serial Data Output**，简称主出从入信号线，这根数据线只能用于主机向从机发送数据，也就是主机输出，从机输入。
+
+④、**MISO/SDI，Master In Slave Out/Serial Data Input**，简称主入从出信号线，这根数据线只能用户从机向主机发送数据，也就是主机输入，从机输出。
+
+SPI 通信都是由主机发起的，主机需要提供通信的时钟信号。
+主机通过 SPI 线连接多个从设备的结构如图：
+
+![alt](./images/Snipaste_2024-12-03_19-26-32.png)
+
+SPI 有四种工作模式，通过串行时钟极性(CPOL)和相位(CPHA)的搭配来得到四种工作模式：
+
+①、CPOL=0，串行时钟空闲状态为低电平。
+②、CPOL=1，串行时钟空闲状态为高电平。
+此时可以通过配置时钟相位(CPHA)来选择具体的传输协议。
+
+③、CPHA=0，串行时钟的第一个跳变沿(上升沿或下降沿)采集数据。
+④、CPHA=1，串行时钟的第二个跳变沿(上升沿或下降沿)采集数据。
+
+这四种工作模式如图：
+
+![alt](./images/Snipaste_2024-12-03_19-32-17.png)
+
+跟 I2C 一样，SPI 也是有时序图的，以 CPOL=0，CPHA=0 这个工作模式为例，SPI 进行全双工通信的时序如图:
+
+![alt](./images/Snipaste_2024-12-03_19-30-12.png)
+
+从图可以看出，SPI 的时序图很简单，不像 I2C 那样还要分为读时序和写时序，因为 SPI 是全双工的，所以读写时序可以一起完成。
+图中，CS 片选信号先拉低，选中要通信的从设备，然后通过 MOSI 和 MISO 这两根数据线进行收发数据，MOSI 数据线发出了0XD2 这个数据给从设备，同时从设备也通过 MISO 线给主设备返回了 0X66 这个数据。
+这个就是 SPI 时序图。
+
+更多SPI时序可以参见STM32 SPI通信笔记。
+
+#### 27.1.2 IMX6uLL ECSPI简介
+
+I.MX6U 自带的 SPI 外设叫做 ECSPI，全称是 Enhanced Configurable Serial Peripheral Interface，别看前面加了个“EC”就以为和标准 SPI 有啥不同的，其实就是 SPI。
+ECSPI 有 64 * 32 个接收FIFO(RXFIFO)和 64 * 32 个发送 FIFO(TXFIFO)，ECSPI 特性如下：
+
+①、全双工同步串行接口。
+②、可配置的主/从模式。
+③、四个片选信号，支持多从机。
+④、发送和接收都有一个 32x64 的 FIFO。
+⑤、片选信号 SS/CS，时钟信号 SCLK 极性可配置。
+⑥、支持 DMA。
+
+I.MX6U 的 ECSPI 可以工作在主模式或从模式，本章我们使用主模式，I.MX6U 有 4 个ECSPI，每个 ECSPI 支持四个片选信号，也就说，如果你要使用 ECSPI 的硬件片选信号的话，一个 ECSPI 可以支持 4 个外设。
+如果不使用硬件的片选信号就可以支持无数个外设，本章实验我们不使用硬件片选信号，因为硬件片选信号只能使用指定的片选 IO，软件片选的话可以使用任意的 IO。
+
+我们接下来看一下 ECSPI 的几个重要的寄存器，首先看一下 ECSPIx_CONREG(x=1~4)寄存器，这是 ECSPI 的控制寄存器，此寄存器结构如图：
+<span style = "color :red"> ECSPIx_CONREG </span>
+
+![alt](./images/Snipaste_2024-12-03_19-39-44.png)
+
+**BURST_LENGTH(bit31:24)**：突发长度，设置 SPI 的突发传输数据长度，在一次 SPI 发送中最大可以发送 2^12bit 数据。
+可以设置 0X000~0XFFF，分别对应 1~2^12bit。
+我们一般设置突发长度为一个字节，也就是 8bit，BURST_LENGTH=7。
+
+**CHANNEL_SELECT(bit19:18)**：SPI 通道选择，一个 ECSPI 有四个硬件片选信号，每个片选信号是一个硬件通道，虽然我们本章实验使用的软件片选，但是 SPI 通道还是要选择的。
+可设置为 0~3，分别对应通道 0~3。
+I.MX6U-ALPHA 开发板上的 ICM-20608 的片选信号接的是ECSPI3_SS0，也就是 ECSPI3 的通道 0，所以本章实验设置为 0。
+
+**DRCTL(bit17:16)**：SPI 的 SPI_RDY 信号控制位，用于设置 SPI_RDY 信号，为 0 的话不关心 SPI_RDY 信号；为 1 的话 SPI_RDY 信号为边沿触发；为 2 的话 SPI_DRY 是电平触发。
+
+**PRE_DIVIDER(bit15:12)**：SPI 预分频，ECSPI 时钟频率使用两步来完成分频，此位设置的是第一步，可设置 0~15，分别对应 1~16 分频。
+
+**POST_DIVIDER(bit11:8)**：SPI 分频值，ECSPI 时钟频率的第二步分频设置，分频值为2^POST_DIVIDER。
+
+**CHANNEL_MODE(bit7:4)**：SPI 通道主/从模式设置，CHANNEL_MODE[3:0]分别对应 SPI通道 3~0，为 0 的话就是设置为从模式，如果为 1 的话就是主模式。
+比如设置为 0X01 的话就是设置通道 0 为主模式。
+
+**SMC(bit3)**：开始模式控制，此位只能在主模式下起作用，为 0 的话通过 XCH 位来开启 SPI突发访问，为 1 的话只要向 TXFIFO 写入数据就开启 SPI 突发访问。
+
+**XCH(bit2)**：此位只在主模式下起作用，当 SMC 为 0 的话此位用来控制 SPI 突发访问的开启。
+
+**HT(bit1)**：HT 模式使能位，I.MX6ULL 不支持。
+
+**EN(bit0)**：SPI 使能位，为 0 的话关闭 SPI，为 1 的话使能 SPI。
+
+接下来看一下寄存器 ECSPIx_CONFIGREG，这个也是 ECSPI 的配置寄存器，此寄存器结构如图 
+<span style = "color :red"> ECSPIx_CONFIGREG </span>
+
+![alt](./images/Snipaste_2024-12-03_19-45-33.png)
+
+**HT_LENGTH(bit28:24)**：HT 模式下的消息长度设置，I.MX6ULL 不支持。
+
+**SCLK_CTL(bit23:20)**：设置 SCLK 信号线空闲状态电平，SCLK_CTL[3:0]分别对应通道3~0，为 0 的话 SCLK 空闲状态为低电平，为 1 的话 SCLK 空闲状态为高电平。
+
+**DATA_CTL(bit19:16)**：设置 DATA 信号线空闲状态电平，DATA_CTL[3:0]分别对应通道3~0，为 0 的话 DATA 空闲状态为高电平，为 1 的话 DATA 空闲状态为低电平。
+
+**SS_POL(bit15:12)**：设置 SPI 片选信号极性设置，SS_POL[3:0]分别对应通道 3~0，为 0 的话片选信号低电平有效，为 1 的话片选信号高电平有效。
+
+**SCLK_POL(bit7:4)**：SPI 时钟信号极性设置，也就是 CPOL，SCLK_POL[3:0]分别对应通道 3~0，为 0 的话 SCLK 高电平有效(空闲的时候为低电平)，为 1 的话 SCLK 低电平有效(空闲的时候为高电平)
+
+**SCLK_PHA(bit3:0)**：SPI时钟相位设置，也就是CPHA，SCLK_PHA[3:0]分别对应通道3~0，为 0 的话串行时钟的第一个跳变沿(上升沿或下降沿)采集数据，为 1 的话串行时钟的第二个跳变沿(上升沿或下降沿)采集数据。
+
+通过 SCLK_POL 和 SCLK_PHA 可以设置 SPI 的工作模式。
+
+接下来看一下寄存器 ECSPIx_PERIODREG，这个是 ECSPI 的采样周期寄存器，此寄存器结构如图:
+
+<span style="color:red"> ECSPIx_PERIODREG </span>
+
+![alt](./images/Snipaste_2024-12-03_19-52-17.png)
+
+寄存器 ECSPIx_PERIODREG 用到的重要位如下：
+
+**CSD_CTL(bit21:16)**：片选信号延时控制位，用于设置片选信号和第一个 SPI 时钟信号之间的时间间隔，范围为 0~63。
+
+**CSRC(bit15)**：SPI 时钟源选择，为 0 的话选择 SPI CLK 为 SPI 的时钟源，为 1 的话选择32.768KHz 的晶振为 SPI 时钟源。
+我们一般选择 SPI CLK 作为 SPI 时钟源，SPI CLK 时钟来源如图:
+
+![alt](./images/Snipaste_2024-12-03_19-53-45.png)
+
+①、这是一个选择器，用于选择根时钟源，由寄存器 CSCDR2 的位 ECSPI_CLK_SEL 来控制，为 0 的话选择 pll3_60m 作为 ECSPI 根时钟源。为 1 的话选择 osc_clk 作为 ECSPI 时钟源。
+本章我们选择 pll3_60m 作为 ECSPI 根时钟源。
+
+②、ECSPI 时钟分频值，由寄存器 CSCDR2 的位 ECSPI_CLK_PODF 来控制，分频值为2^ECSPI_CLK_PODF。本章我们设置为 0，也就是 1 分频。
+
+③、最终进入 ECSPI 的时钟，也就是 SPI CLK=60MHz。
+
+**SAMPLE_PERIO**：采样周期寄存器，可设置为 0~0X7FFF 分别对应 0~32767 个周期。
+
+接下来看一下寄存器 ECSPIx_STATREG，这个是 ECSPI 的状态寄存器，此寄存器结构如图
+<span style="color:red"> ECSPIx_STATREG </span>
+
+![alt](./images/Snipaste_2024-12-03_19-55-31.png)
+
+寄存器 ECSPIx_STATREG 用到的重要位如下：
+
+**TC(bit7)**：传输完成标志位，为 0 表示正在传输，为 1 表示传输完成。
+**RO(bit6)**：RXFIFO 溢出标志位，为 0 表示 RXFIFO 无溢出，为 1 表示 RXFIFO 溢出。
+**RF(bit5)**：RXFIFO 空标志位，为 0 表示 RXFIFO 不为空，为 1 表示 RXFIFO 为空。
+**RDR(bit4)**：RXFIFO 数据请求标志位，此位为 0 表示 RXFIFO 里面的数据不大于RX_THRESHOLD，此位为 1 的话表示 RXFIFO 里面的数据大于 RX_THRESHOLD。
+**RR(bit3)**：RXFIFO 就绪标志位，为 0 的话 RXFIFO 没有数据，为 1 的话表示 RXFIFO 中至少有一个字的数据。
+**TF(bit2)**：TXFIFO 满标志位，为 0 的话表示 TXFIFO 不为满，为 1 的话表示 TXFIFO 为满。
+**TDR(bit1)**：TXFIFO 数据请求标志位，为 0 表示 TXFIFO 中的数据大于 TX_THRESHOLD，为 1 表示 TXFIFO 中的数据不大于 TX_THRESHOLD。
+**TE(bit0)**：TXFIFO 空标志位，为 0 表示 TXFIFO 中至少有一个字的数据，为 1 表示 TXFIFO为空。
+
+最后就是两个数据寄存器，ECSPIx_TXDATA 和 ECSPIx_RXDATA，这两个寄存器都是 32位的，如果要发送数据就向寄存器 ECSPIx_TXDATA 写入数据，读取及存取 ECSPIx_RXDATA里面的数据就可以得到刚刚接收到的数据。
+
+关于 ECSPI 的寄存器就介绍到这里，关于这些寄存器详细的描述，请参考《I.MX6ULL 参考手册》第 805 页的 20.7 小节。
+
+#### 27.1.3 ICM-20608简介
+
+ICM-20608 是 InvenSense 出品的一款 6 轴 MEMS 传感器，包括 3 轴加速度和 3 轴陀螺仪。
+ICM-20608 尺寸非常小，只有 3x3x0.75mm，采用 16P 的 LGA 封装。ICM-20608 内部有一个 512字节的 FIFO。
+陀螺仪的量程范围可以编程设置，可选择±250，±500，±1000 和±2000°/s，加速度的量程范围也可以编程设置，可选择±2g，±4g，±8g 和±16g。
+陀螺仪和加速度计都是 16 位的 ADC，并且支持 I2C 和 SPI 两种协议，使用 I2C 接口的话通信速度最高可以达到400KHz，使用 SPI 接口的话通信速度最高可达到 8MHz。
+I.MX6U-ALPHA 开发板上的 ICM20608 通过 SPI 接口和 I.MX6U 连接在一起。
+ICM-20608 特性如下：
+
+①、陀螺仪支持 X,Y 和 Z 三轴输出，内部集成 16 位 ADC，测量范围可设置：±250，±500，±1000 和±2000°/s。
+②、加速度计支持 X,Y 和 Z 轴输出，内部集成 16 位 ADC，测量范围可设置：±2g，±4g，±4g，±8g 和±16g。
+③、用户可编程中断。
+④、内部包含 512 字节的 FIFO。
+⑤、内部包含一个数字温度传感器。
+⑥、耐 10000g 的冲击。
+⑦、支持快速 I2C，速度可达 400KHz。
+⑧、支持 SPI，速度可达 8MHz。
+
+陀螺仪如图：
+![alt](./images/Snipaste_2024-12-03_20-04-46.png)
+
+ICM-20608 的结构框图如图:
+![alt](./images/Snipaste_2024-12-03_20-05-38.png)
+
+如果使用 IIC 接口的话 ICM-20608 的 AD0 引脚决定 I2C 设备从地址的最后一位，如果 AD0为 0 的话 ICM-20608 从设备地址是 0X68，如果 AD0 为 1 的话 ICM-20608 从设备地址为 0X69。
+
+本章我们使用 SPI 接口，跟上一章使用 AP3216C 一样，ICM-20608 也是通过读写寄存器来配置和读取传感器数据，使用 SPI 接口读写寄存器需要 16 个时钟或者更多(如果读写操作包括多个字节的话)，第一个字节包含要读写的寄存器地址，寄存器地址最高位是读写标志位，如果是读的话寄存器地址最高位要为 1，如果是写的话寄存器地址最高位要为 0，剩下的 7 位才是实际的寄存器地址，寄存器地址后面跟着的就是读写的数据。
+
+下图列出了本章实验用到的一些寄存器和位，关于 ICM-20608 的详细寄存器和位的介绍请参考 ICM-20608 的寄存器手册：
+![alt](./images/Snipaste_2024-12-03_20-08-02.png)
+![alt](./images/Snipaste_2024-12-03_20-09-08.png)
+![alt](./images/Snipaste_2024-12-03_20-09-18.png)
+ICM-20608 的介绍就到这里，关于 ICM-20608 的详细介绍请参考 ICM-20608 的数据手册和寄存器手册。
+
+### 27.2 硬件原理分析
+
+本试验用到的资源如下：
+①、指示灯 LED0。
+②、RGB LCD 屏幕。
+③、ICM20608
+④、串口
+ICM-20608 是在 I.MX6U-ALPHA 开发板底板上，原理图如图
+![alt](./images/Snipaste_2024-12-03_20-10-38.png)
+
+### 27.3 实验程序编写
+
+本实验对应的例程路径为：开发板光盘-> 1、裸机例程-> 18_spi。
+然后在 bsp 文件夹下创建名为“spi”和“icm20608”的文件
+在 bsp/spi 中新建 bsp_spi.c 和 bsp_spi.h 这两个文件，
+在 bsp/icm20608 中新建 bsp_icm20608.c 和 bsp_icm20608.h 这两个文件。bsp_spi.c 和 bsp_spi.h是 I.MX6U 的 SPI 文件
+bsp_icm20608.c 和bsp_icm20608.h 是 ICM20608的驱动文件
+```C
+bsp_spi.h
+#ifndef _BSP_SPI_H
+#define _BSP_SPI_H
+/***************************************************************
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+文件名	: 	 bsp_spi.h
+作者	   : 左忠凯
+版本	   : V1.0
+描述	   : SPI驱动头文件。
+其他	   : 无
+论坛 	   : www.wtmembed.com
+日志	   : 初版V1.0 2019/1/17 左忠凯创建
+***************************************************************/
+#include "imx6ul.h"
+
+/* 函数声明 */
+void spi_init(ECSPI_Type *base); //SPI初始化
+unsigned char spich0_readwrite_byte(ECSPI_Type *base, unsigned char txdata); //数据传输函数
+
+#endif
+```
+
+```C
+bsp_spi.c
+/***************************************************************
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+文件名	: 	 bsp_spi.c
+作者	   : 左忠凯
+版本	   : V1.0
+描述	   : SPI驱动文件。
+其他	   : 无
+论坛 	   : www.wtmembed.com
+日志	   : 初版V1.0 2019/1/17 左忠凯创建
+***************************************************************/
+#include "bsp_spi.h"
+#include "bsp_gpio.h"
+#include "stdio.h"
+
+/*
+ * @description		: 初始化SPI
+ * @param - base	: 要初始化的SPI
+ * @return 			: 无
+ */
+void spi_init(ECSPI_Type *base)
+{
+	/* 配置CONREG寄存器
+	 * bit0 : 		1 	使能ECSPI
+	 * bit3 : 		1	当向TXFIFO写入数据以后立即开启SPI突发。
+	 * bit[7:4] : 	0001 SPI通道0主模式，根据实际情况选择，
+	 *            	   	开发板上的ICM-20608接在SS0上，所以设置通道0为主模式
+	 * bit[19:18]:	00 	选中通道0(其实不需要，因为片选信号我们我们自己控制)
+	 * bit[31:20]:	0x7	突发长度为8个bit。 
+	 */
+	base->CONREG = 0; /* 先清除控制寄存器 */
+	base->CONREG |= (1 << 0) | (1 << 3) | (1 << 4) | (7 << 20); /* 配置CONREG寄存器 */
+
+	/*
+     * ECSPI通道0设置,即设置CONFIGREG寄存器
+     * bit0:	0 通道0 PHA为0
+     * bit4:	0 通道0 SCLK高电平有效
+     * bit8: 	0 通道0片选信号 当SMC为1的时候此位无效
+     * bit12：	0 通道0 POL为0
+     * bit16：	0 通道0 数据线空闲时高电平
+     * bit20:	0 通道0 时钟线空闲时低电平
+	 */
+	base->CONFIGREG = 0; 		/* 设置通道寄存器 */
+	
+	/*  
+     * ECSPI通道0设置，设置采样周期
+     * bit[14:0] :	0X2000  采样等待周期，比如当SPI时钟为10MHz的时候
+     *  		    0X2000就等于1/10000 * 0X2000 = 0.8192ms，也就是连续
+     *          	读取数据的时候每次之间间隔0.8ms
+     * bit15	 :  0  采样时钟源为SPI CLK
+     * bit[21:16]:  0  片选延时，可设置为0~63
+	 */
+	base->PERIODREG = 0X2000;		/* 设置采样周期寄存器 */
+
+	/*
+     * ECSPI的SPI时钟配置，SPI的时钟源来源于pll3_sw_clk/8=480/8=60MHz
+     * 通过设置CONREG寄存器的PER_DIVIDER(bit[11:8])和POST_DIVEDER(bit[15:12])来
+     * 对SPI时钟源分频，获取到我们想要的SPI时钟：
+     * SPI CLK = (SourceCLK / PER_DIVIDER) / (2^POST_DIVEDER)
+     * 比如我们现在要设置SPI时钟为6MHz，那么PER_DIVEIDER和POST_DEIVIDER设置如下：
+     * PER_DIVIDER = 0X9。
+     * POST_DIVIDER = 0X0。
+     * SPI CLK = 60000000/(0X9 + 1) = 60000000=6MHz
+	 */
+	base->CONREG &= ~((0XF << 12) | (0XF << 8));	/* 清除PER_DIVDER和POST_DIVEDER以前的设置 */
+	base->CONREG |= (0X9 << 12);					/* 设置SPI CLK = 6MHz */
+}
+
+/*
+ * @description		: SPI通道0发送/接收一个字节的数据
+ * @param - base	: 要使用的SPI
+ * @param - txdata	: 要发送的数据
+ * @return 			: 无
+ */
+unsigned char spich0_readwrite_byte(ECSPI_Type *base, unsigned char txdata)
+{ 
+	uint32_t  spirxdata = 0;
+	uint32_t  spitxdata = txdata;
+
+    /* 选择通道0 */
+	base->CONREG &= ~(3 << 18);
+	base->CONREG |= (0 << 18);
+
+  	while((base->STATREG & (1 << 0)) == 0){} /* 等待发送FIFO为空 */
+		base->TXDATA = spitxdata;
+	
+	while((base->STATREG & (1 << 3)) == 0){} /* 等待接收FIFO有数据 */
+		spirxdata = base->RXDATA;
+	return spirxdata;
+}
+
+```
+函数 spi_init 是 SPI 初始化函数，此函数会初始化 SPI 的时钟，通道等。
+函数 spich0_readwrite_byte 是 SPI 收发函数，通过此函数即可完成 SPI 的全双工数据收发。
+
+```C
+#ifndef _BSP_ICM20608_H
+#define _BSP_ICM20608_H
+/***************************************************************
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+文件名	: 	 bsp_icm20608.h
+作者	   : 左忠凯
+版本	   : V1.0
+描述	   : ICM20608驱动文件。
+其他	   : 无
+论坛 	   : www.wtmembed.com
+日志	   : 初版V1.0 2019/3/26 左忠凯创建
+***************************************************************/
+#include "imx6ul.h"
+#include "bsp_gpio.h"
+
+
+/* 宏定义 */
+#define ICM20608_CSN(n)    (n ? gpio_pinwrite(GPIO1, 20, 1) : gpio_pinwrite(GPIO1, 20, 0))   /* SPI片选信号	 */
+
+#define ICM20608G_ID			0XAF	/* ID值 */
+#define ICM20608D_ID			0XAE	/* ID值 */
+
+/* ICM20608寄存器 
+ *复位后所有寄存器地址都为0，除了
+ *Register 107(0X6B) Power Management 1 	= 0x40
+ *Register 117(0X75) WHO_AM_I 				= 0xAF或0xAE
+ */
+/* 陀螺仪和加速度自测(出产时设置，用于与用户的自检输出值比较） */
+#define	ICM20_SELF_TEST_X_GYRO		0x00
+#define	ICM20_SELF_TEST_Y_GYRO		0x01
+#define	ICM20_SELF_TEST_Z_GYRO		0x02
+#define	ICM20_SELF_TEST_X_ACCEL		0x0D
+#define	ICM20_SELF_TEST_Y_ACCEL		0x0E
+#define	ICM20_SELF_TEST_Z_ACCEL		0x0F
+
+/* 陀螺仪静态偏移 */
+#define	ICM20_XG_OFFS_USRH			0x13
+#define	ICM20_XG_OFFS_USRL			0x14
+#define	ICM20_YG_OFFS_USRH			0x15
+#define	ICM20_YG_OFFS_USRL			0x16
+#define	ICM20_ZG_OFFS_USRH			0x17
+#define	ICM20_ZG_OFFS_USRL			0x18
+
+#define	ICM20_SMPLRT_DIV			0x19
+#define	ICM20_CONFIG				0x1A
+#define	ICM20_GYRO_CONFIG			0x1B
+#define	ICM20_ACCEL_CONFIG			0x1C
+#define	ICM20_ACCEL_CONFIG2			0x1D
+#define	ICM20_LP_MODE_CFG			0x1E
+#define	ICM20_ACCEL_WOM_THR			0x1F
+#define	ICM20_FIFO_EN				0x23
+#define	ICM20_FSYNC_INT				0x36
+#define	ICM20_INT_PIN_CFG			0x37
+#define	ICM20_INT_ENABLE			0x38
+#define	ICM20_INT_STATUS			0x3A
+
+/* 加速度输出 */
+#define	ICM20_ACCEL_XOUT_H			0x3B
+#define	ICM20_ACCEL_XOUT_L			0x3C
+#define	ICM20_ACCEL_YOUT_H			0x3D
+#define	ICM20_ACCEL_YOUT_L			0x3E
+#define	ICM20_ACCEL_ZOUT_H			0x3F
+#define	ICM20_ACCEL_ZOUT_L			0x40
+
+/* 温度输出 */
+#define	ICM20_TEMP_OUT_H			0x41
+#define	ICM20_TEMP_OUT_L			0x42
+
+/* 陀螺仪输出 */
+#define	ICM20_GYRO_XOUT_H			0x43
+#define	ICM20_GYRO_XOUT_L			0x44
+#define	ICM20_GYRO_YOUT_H			0x45
+#define	ICM20_GYRO_YOUT_L			0x46
+#define	ICM20_GYRO_ZOUT_H			0x47
+#define	ICM20_GYRO_ZOUT_L			0x48
+
+#define	ICM20_SIGNAL_PATH_RESET		0x68
+#define	ICM20_ACCEL_INTEL_CTRL 		0x69
+#define	ICM20_USER_CTRL				0x6A
+#define	ICM20_PWR_MGMT_1			0x6B
+#define	ICM20_PWR_MGMT_2			0x6C
+#define	ICM20_FIFO_COUNTH			0x72
+#define	ICM20_FIFO_COUNTL			0x73
+#define	ICM20_FIFO_R_W				0x74
+#define	ICM20_WHO_AM_I 				0x75
+
+/* 加速度静态偏移 */
+#define	ICM20_XA_OFFSET_H			0x77
+#define	ICM20_XA_OFFSET_L			0x78
+#define	ICM20_YA_OFFSET_H			0x7A
+#define	ICM20_YA_OFFSET_L			0x7B
+#define	ICM20_ZA_OFFSET_H			0x7D
+#define	ICM20_ZA_OFFSET_L 			0x7E
+
+/*
+ * ICM20608结构体
+ */
+struct icm20608_dev_struc
+{
+	signed int gyro_x_adc;		/* 陀螺仪X轴原始值 			*/
+	signed int gyro_y_adc;		/* 陀螺仪Y轴原始值 			*/
+	signed int gyro_z_adc;		/* 陀螺仪Z轴原始值 			*/
+	signed int accel_x_adc;		/* 加速度计X轴原始值 			*/
+	signed int accel_y_adc;		/* 加速度计Y轴原始值 			*/
+	signed int accel_z_adc;		/* 加速度计Z轴原始值 			*/
+	signed int temp_adc;		/* 温度原始值 				*/
+
+	/* 下面是计算得到的实际值，扩大100倍 */
+	signed int gyro_x_act;		/* 陀螺仪X轴实际值 			*/
+	signed int gyro_y_act;		/* 陀螺仪Y轴实际值 			*/
+	signed int gyro_z_act;		/* 陀螺仪Z轴实际值 			*/
+	signed int accel_x_act;		/* 加速度计X轴实际值 			*/
+	signed int accel_y_act;		/* 加速度计Y轴实际值 			*/
+	signed int accel_z_act;		/* 加速度计Z轴实际值 			*/
+	signed int temp_act;		/* 温度实际值 				*/
+};
+
+struct icm20608_dev_struc icm20608_dev;	/* icm20608设备 */
+
+
+/* 函数声明 */
+unsigned char icm20608_init(void);
+void icm20608_write_reg(unsigned char reg, unsigned char value);
+unsigned char icm20608_read_reg(unsigned char reg);
+void icm20608_read_len(unsigned char reg, unsigned char *buf, unsigned char len);
+void icm20608_getdata(void);
+
+
+#endif
+```
+文件 bsp_icm20608.h 里面先定义了一个宏 ICM20608_CSN
+这个是 ICM20608 的 SPI 片选引脚。
+接下来定义了一些 ICM20608 的 ID 和寄存器地址。
+第 41 行定义了一个结构体icm20608_dev_struc，这个结构体是 ICM20608 的设备结构体，里面的成员变量用来保存ICM20608 的原始数据值和经过转换得到的实际值。
+实际值是有小数的，本章例程取两位小数，为了方便计算，实际值扩大了 100 倍，这样实际值就是整数了，但是在使用的时候要除 100 重新得到小数部分。
+最后就是一些函数声明!
+
+```C
+bsp_icm20608.c
+/***************************************************************
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+文件名	: 	 bsp_icm20608.c
+作者	   : 左忠凯
+版本	   : V1.0
+描述	   : ICM20608驱动文件。
+其他	   : 无
+论坛 	   : www.wtmembed.com
+日志	   : 初版V1.0 2019/3/26 左忠凯创建
+***************************************************************/
+#include "bsp_icm20608.h"
+#include "bsp_delay.h"
+#include "bsp_spi.h"
+#include "stdio.h"
+
+struct icm20608_dev_struc icm20608_dev;	/* icm20608设备 */
+
+/*
+ * @description	: 初始化ICM20608
+ * @param		: 无
+ * @return 		: 0 初始化成功，其他值 初始化失败
+ */
+unsigned char icm20608_init(void)
+{	
+	unsigned char regvalue;
+	gpio_pin_config_t cs_config;
+
+	/* 1、ESPI3 IO初始化 
+ 	 * ECSPI3_SCLK 	-> UART2_RXD
+ 	 * ECSPI3_MISO 	-> UART2_RTS
+ 	 * ECSPI3_MOSI	-> UART2_CTS
+ 	 */
+	IOMUXC_SetPinMux(IOMUXC_UART2_RX_DATA_ECSPI3_SCLK, 0);
+	IOMUXC_SetPinMux(IOMUXC_UART2_CTS_B_ECSPI3_MOSI, 0);
+	IOMUXC_SetPinMux(IOMUXC_UART2_RTS_B_ECSPI3_MISO, 0);
+	
+	/* 配置SPI   SCLK MISO MOSI IO属性	
+	 *bit 16: 0 HYS关闭
+	 *bit [15:14]: 00 默认100K下拉
+	 *bit [13]: 0 keeper功能
+	 *bit [12]: 1 pull/keeper使能 
+	 *bit [11]: 0 关闭开路输出
+ 	 *bit [7:6]: 10 速度100Mhz
+ 	 *bit [5:3]: 110 驱动能力为R0/6
+	 *bit [0]: 1 高转换率
+ 	 */
+	IOMUXC_SetPinConfig(IOMUXC_UART2_RX_DATA_ECSPI3_SCLK, 0x10B1);
+	IOMUXC_SetPinConfig(IOMUXC_UART2_CTS_B_ECSPI3_MOSI, 0x10B1);
+	IOMUXC_SetPinConfig(IOMUXC_UART2_RTS_B_ECSPI3_MISO, 0x10B1);
+
+	
+	IOMUXC_SetPinMux(IOMUXC_UART2_TX_DATA_GPIO1_IO20, 0);
+	IOMUXC_SetPinConfig(IOMUXC_UART2_TX_DATA_GPIO1_IO20, 0X10B0);
+	cs_config.direction = kGPIO_DigitalOutput;
+	cs_config.outputLogic = 0;
+	gpio_init(GPIO1, 20, &cs_config);
+	
+	/* 2、初始化SPI */
+	spi_init(ECSPI3);	
+
+	icm20608_write_reg(ICM20_PWR_MGMT_1, 0x80);		/* 复位，复位后为0x40,睡眠模式 			*/
+	delayms(50);
+	icm20608_write_reg(ICM20_PWR_MGMT_1, 0x01);		/* 关闭睡眠，自动选择时钟 					*/
+	delayms(50);
+
+	regvalue = icm20608_read_reg(ICM20_WHO_AM_I);
+	printf("icm20608 id = %#X\r\n", regvalue);
+	if(regvalue != ICM20608G_ID && regvalue != ICM20608D_ID)
+		return 1;
+		
+	icm20608_write_reg(ICM20_SMPLRT_DIV, 0x00); 	/* 输出速率是内部采样率					*/
+	icm20608_write_reg(ICM20_GYRO_CONFIG, 0x18); 	/* 陀螺仪±2000dps量程 				*/
+	icm20608_write_reg(ICM20_ACCEL_CONFIG, 0x18); 	/* 加速度计±16G量程 					*/
+	icm20608_write_reg(ICM20_CONFIG, 0x04); 		/* 陀螺仪低通滤波BW=20Hz 				*/
+	icm20608_write_reg(ICM20_ACCEL_CONFIG2, 0x04); 	/* 加速度计低通滤波BW=21.2Hz 			*/
+	icm20608_write_reg(ICM20_PWR_MGMT_2, 0x00); 	/* 打开加速度计和陀螺仪所有轴 				*/
+	icm20608_write_reg(ICM20_LP_MODE_CFG, 0x00); 	/* 关闭低功耗 						*/
+	icm20608_write_reg(ICM20_FIFO_EN, 0x00);		/* 关闭FIFO						*/
+	return 0;
+}
+
+	
+/*
+ * @description  : 写ICM20608指定寄存器
+ * @param - reg  : 要读取的寄存器地址
+ * @param - value: 要写入的值
+ * @return		 : 无
+ */
+void icm20608_write_reg(unsigned char reg, unsigned char value)
+{
+	/* ICM20608在使用SPI接口的时候寄存器地址
+	 * 只有低7位有效,寄存器地址最高位是读/写标志位
+	 * 读的时候要为1，写的时候要为0。
+	 */
+	reg &= ~0X80;	
+	
+	ICM20608_CSN(0);						/* 使能SPI传输			*/
+	spich0_readwrite_byte(ECSPI3, reg); 	/* 发送寄存器地址		*/ 
+	spich0_readwrite_byte(ECSPI3, value);	/* 发送要写入的值			*/
+	ICM20608_CSN(1);						/* 禁止SPI传输			*/
+}	
+
+/*
+ * @description	: 读取ICM20608寄存器值
+ * @param - reg	: 要读取的寄存器地址
+ * @return 		: 读取到的寄存器值
+ */
+unsigned char icm20608_read_reg(unsigned char reg)
+{
+	unsigned char reg_val;	   	
+
+	/* ICM20608在使用SPI接口的时候寄存器地址
+	 * 只有低7位有效,寄存器地址最高位是读/写标志位
+	 * 读的时候要为1，写的时候要为0。
+	 */
+	reg |= 0x80; 	
+	
+   	ICM20608_CSN(0);               					/* 使能SPI传输	 		*/
+  	spich0_readwrite_byte(ECSPI3, reg);     		/* 发送寄存器地址  		*/ 
+  	reg_val = spich0_readwrite_byte(ECSPI3, 0XFF);	/* 读取寄存器的值 			*/
+ 	ICM20608_CSN(1);                				/* 禁止SPI传输 			*/
+  	return(reg_val);               	 				/* 返回读取到的寄存器值 */
+}
+
+/*
+ * @description	: 读取ICM20608连续多个寄存器
+ * @param - reg	: 要读取的寄存器地址
+ * @return 		: 读取到的寄存器值
+ */
+void icm20608_read_len(unsigned char reg, unsigned char *buf, unsigned char len)
+{  
+	unsigned char i;
+	
+	/* ICM20608在使用SPI接口的时候寄存器地址，只有低7位有效,
+	 * 寄存器地址最高位是读/写标志位读的时候要为1，写的时候要为0。
+	 */
+	reg |= 0x80; 
+		
+   	ICM20608_CSN(0);               				/* 使能SPI传输	 		*/
+  	spich0_readwrite_byte(ECSPI3, reg);			/* 发送寄存器地址  		*/   	   
+ 	for(i = 0; i < len; i++)					/* 顺序读取寄存器的值 			*/
+ 	{
+		buf[i] = spich0_readwrite_byte(ECSPI3, 0XFF);	
+	}
+ 	ICM20608_CSN(1);                			/* 禁止SPI传输 			*/
+}
+
+/*
+ * @description : 获取陀螺仪的分辨率
+ * @param		: 无
+ * @return		: 获取到的分辨率
+ */
+float icm20608_gyro_scaleget(void)
+{
+	unsigned char data;
+	float gyroscale;
+	
+	data = (icm20608_read_reg(ICM20_GYRO_CONFIG) >> 3) & 0X3;
+	switch(data) {
+		case 0: 
+			gyroscale = 131;
+			break;
+		case 1:
+			gyroscale = 65.5;
+			break;
+		case 2:
+			gyroscale = 32.8;
+			break;
+		case 3:
+			gyroscale = 16.4;
+			break;
+	}
+	return gyroscale;
+}
+
+/*
+ * @description : 获取加速度计的分辨率
+ * @param		: 无
+ * @return		: 获取到的分辨率
+ */
+unsigned short icm20608_accel_scaleget(void)
+{
+	unsigned char data;
+	unsigned short accelscale;
+	
+	data = (icm20608_read_reg(ICM20_ACCEL_CONFIG) >> 3) & 0X3;
+	switch(data) {
+		case 0: 
+			accelscale = 16384;
+			break;
+		case 1:
+			accelscale = 8192;
+			break;
+		case 2:
+			accelscale = 4096;
+			break;
+		case 3:
+			accelscale = 2048;
+			break;
+	}
+	return accelscale;
+}
+
+
+/*
+ * @description : 读取ICM20608的加速度、陀螺仪和温度原始值
+ * @param 		: 无
+ * @return		: 无
+ */
+void icm20608_getdata(void)
+{
+	float gyroscale;
+	unsigned short accescale;
+	unsigned char data[14];
+	
+	icm20608_read_len(ICM20_ACCEL_XOUT_H, data, 14);
+	
+	gyroscale = icm20608_gyro_scaleget();
+	accescale = icm20608_accel_scaleget();
+
+	icm20608_dev.accel_x_adc = (signed short)((data[0] << 8) | data[1]); 
+	icm20608_dev.accel_y_adc = (signed short)((data[2] << 8) | data[3]); 
+	icm20608_dev.accel_z_adc = (signed short)((data[4] << 8) | data[5]); 
+	icm20608_dev.temp_adc    = (signed short)((data[6] << 8) | data[7]); 
+	icm20608_dev.gyro_x_adc  = (signed short)((data[8] << 8) | data[9]); 
+	icm20608_dev.gyro_y_adc  = (signed short)((data[10] << 8) | data[11]);
+	icm20608_dev.gyro_z_adc  = (signed short)((data[12] << 8) | data[13]);
+
+	/* 计算实际值 */
+	icm20608_dev.gyro_x_act = ((float)(icm20608_dev.gyro_x_adc)  / gyroscale) * 100;
+	icm20608_dev.gyro_y_act = ((float)(icm20608_dev.gyro_y_adc)  / gyroscale) * 100;
+	icm20608_dev.gyro_z_act = ((float)(icm20608_dev.gyro_z_adc)  / gyroscale) * 100;
+
+	icm20608_dev.accel_x_act = ((float)(icm20608_dev.accel_x_adc) / accescale) * 100;
+	icm20608_dev.accel_y_act = ((float)(icm20608_dev.accel_y_adc) / accescale) * 100;
+	icm20608_dev.accel_z_act = ((float)(icm20608_dev.accel_z_adc) / accescale) * 100;
+
+	icm20608_dev.temp_act = (((float)(icm20608_dev.temp_adc) - 25 ) / 326.8 + 25) * 100;
+}
+
+```
+
+main.c填写如下：
+
+```C
+/**************************************************************
+Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+文件名	: 	 mian.c
+作者	   : 左忠凯
+版本	   : V1.0
+描述	   : I.MX6U开发板裸机实验19 SPI实验
+其他	   : SPI也是最常用的接口，ZERO开发板上有一个6轴传感器ICM20608，
+		 这个六轴传感器就是SPI接口的，本实验就来学习如何驱动I.MX6U
+		 的SPI接口，并且通过SPI接口读取ICM20608的数据值。
+论坛 	   : www.wtmembed.com
+日志	   : 初版V1.0 2019/1/17 左忠凯创建
+**************************************************************/
+#include "bsp_clk.h"
+#include "bsp_delay.h"
+#include "bsp_led.h"
+#include "bsp_beep.h"
+#include "bsp_key.h"
+#include "bsp_int.h"
+#include "bsp_uart.h"
+#include "bsp_lcd.h"
+#include "bsp_lcdapi.h"
+#include "bsp_rtc.h"
+#include "bsp_icm20608.h"
+#include "bsp_spi.h"
+#include "stdio.h"
+
+
+/*
+ * @description	: 指定的位置显示整数数据
+ * @param - x	: X轴位置
+ * @param - y 	: Y轴位置
+ * @param - size: 字体大小
+ * @param - num : 要显示的数据
+ * @return 		: 无
+ */
+void integer_display(unsigned short x, unsigned short y, unsigned char size, signed int num)
+{
+	char buf[200];
+	
+	lcd_fill(x, y, x + 50, y + size, tftlcd_dev.backcolor);
+	
+	memset(buf, 0, sizeof(buf));
+	if(num < 0)
+		sprintf(buf, "-%d", -num);
+	else 
+		sprintf(buf, "%d", num);
+	lcd_show_string(x, y, 50, size, size, buf); 
+}
+
+
+/*
+ * @description	: 指定的位置显示小数数据,比如5123，显示为51.23
+ * @param - x	: X轴位置
+ * @param - y 	: Y轴位置
+ * @param - size: 字体大小
+ * @param - num : 要显示的数据，实际小数扩大100倍，
+ * @return 		: 无
+ */
+void decimals_display(unsigned short x, unsigned short y, unsigned char size, signed int num)
+{
+	signed int integ; 	/* 整数部分 */
+	signed int fract;	/* 小数部分 */
+	signed int uncomptemp = num; 
+	char buf[200];
+
+	if(num < 0)
+		uncomptemp = -uncomptemp;
+	integ = uncomptemp / 100;
+	fract = uncomptemp % 100;
+
+	memset(buf, 0, sizeof(buf));
+	if(num < 0)
+		sprintf(buf, "-%d.%d", integ, fract);
+	else 
+		sprintf(buf, "%d.%d", integ, fract);
+	lcd_fill(x, y, x + 60, y + size, tftlcd_dev.backcolor);
+	lcd_show_string(x, y, 60, size, size, buf); 
+}
+
+/*
+ * @description	: 使能I.MX6U的硬件NEON和FPU
+ * @param 		: 无
+ * @return 		: 无
+ */
+ void imx6ul_hardfpu_enable(void)
+{
+	uint32_t cpacr;
+	uint32_t fpexc;
+
+	/* 使能NEON和FPU */
+	cpacr = __get_CPACR();
+	cpacr = (cpacr & ~(CPACR_ASEDIS_Msk | CPACR_D32DIS_Msk))
+		   |  (3UL << CPACR_cp10_Pos) | (3UL << CPACR_cp11_Pos);
+	__set_CPACR(cpacr);
+	fpexc = __get_FPEXC();
+	fpexc |= 0x40000000UL;	
+	__set_FPEXC(fpexc);
+}
+
+/*
+ * @description	: main函数
+ * @param 		: 无
+ * @return 		: 无
+ */
+int main(void)
+{
+	unsigned char state = OFF;
+
+	imx6ul_hardfpu_enable();	/* 使能I.MX6U的硬件浮点 			*/
+	int_init(); 				/* 初始化中断(一定要最先调用！) */
+	imx6u_clkinit();			/* 初始化系统时钟 					*/
+	delay_init();				/* 初始化延时 					*/
+	clk_enable();				/* 使能所有的时钟 					*/
+	led_init();					/* 初始化led 					*/
+	beep_init();				/* 初始化beep	 				*/
+	uart_init();				/* 初始化串口，波特率115200 */
+	lcd_init();					/* 初始化LCD 					*/		
+
+	tftlcd_dev.forecolor = LCD_RED;
+	lcd_show_string(50, 10, 400, 24, 24, (char*)"ALPHA-IMX6U SPI TEST");  
+	lcd_show_string(50, 40, 200, 16, 16, (char*)"ICM20608 TEST");  
+	lcd_show_string(50, 60, 200, 16, 16, (char*)"ATOM@ALIENTEK");  
+	lcd_show_string(50, 80, 200, 16, 16, (char*)"2019/3/27");  
+	
+	while(icm20608_init())		/* 初始化ICM20608	 			*/
+	{
+		lcd_show_string(50, 100, 200, 16, 16, (char*)"ICM20608 Check Failed!");
+		delayms(500);
+		lcd_show_string(50, 100, 200, 16, 16, (char*)"Please Check!        ");
+		delayms(500);
+	}	
+
+	lcd_show_string(50, 100, 200, 16, 16, (char*)"ICM20608 Ready");
+	
+	lcd_show_string(50, 130, 200, 16, 16, (char*)"accel x:");  
+	lcd_show_string(50, 150, 200, 16, 16, (char*)"accel y:");  
+	lcd_show_string(50, 170, 200, 16, 16, (char*)"accel z:");  
+	lcd_show_string(50, 190, 200, 16, 16, (char*)"gyro  x:"); 
+	lcd_show_string(50, 210, 200, 16, 16, (char*)"gyro  y:"); 
+	lcd_show_string(50, 230, 200, 16, 16, (char*)"gyro  z:"); 
+	lcd_show_string(50, 250, 200, 16, 16, (char*)"temp   :"); 
+
+	lcd_show_string(50 + 181, 130, 200, 16, 16, (char*)"g");  
+	lcd_show_string(50 + 181, 150, 200, 16, 16, (char*)"g");  
+	lcd_show_string(50 + 181, 170, 200, 16, 16, (char*)"g");  
+	lcd_show_string(50 + 181, 190, 200, 16, 16, (char*)"o/s"); 
+	lcd_show_string(50 + 181, 210, 200, 16, 16, (char*)"o/s"); 
+	lcd_show_string(50 + 181, 230, 200, 16, 16, (char*)"o/s"); 
+	lcd_show_string(50 + 181, 250, 200, 16, 16, (char*)"C");
+	
+	tftlcd_dev.forecolor = LCD_BLUE;
+
+	while(1)					
+	{		
+		icm20608_getdata();
+		integer_display(50 + 70, 130, 16, icm20608_dev.accel_x_adc);
+		integer_display(50 + 70, 150, 16, icm20608_dev.accel_y_adc);
+		integer_display(50 + 70, 170, 16, icm20608_dev.accel_z_adc);
+		integer_display(50 + 70, 190, 16, icm20608_dev.gyro_x_adc);
+		integer_display(50 + 70, 210, 16, icm20608_dev.gyro_y_adc);
+		integer_display(50 + 70, 230, 16, icm20608_dev.gyro_z_adc);
+		integer_display(50 + 70, 250, 16, icm20608_dev.temp_adc);
+
+		decimals_display(50 + 70 + 50, 130, 16, icm20608_dev.accel_x_act);
+		decimals_display(50 + 70 + 50, 150, 16, icm20608_dev.accel_y_act);
+		decimals_display(50 + 70 + 50, 170, 16, icm20608_dev.accel_z_act);
+		decimals_display(50 + 70 + 50, 190, 16, icm20608_dev.gyro_x_act);
+		decimals_display(50 + 70 + 50, 210, 16, icm20608_dev.gyro_y_act);
+		decimals_display(50 + 70 + 50, 230, 16, icm20608_dev.gyro_z_act);
+		decimals_display(50 + 70 + 50, 250, 16, icm20608_dev.temp_act);
+
+#if 0		
+		printf("accel x = %d\r\n",icm20608_dev.accel_x_adc);
+		printf("accel y = %d\r\n",icm20608_dev.accel_y_adc);
+		printf("accel z = %d\r\n",icm20608_dev.accel_z_adc);
+		printf("gyrp  x = %d\r\n",icm20608_dev.gyro_x_adc);
+		printf("gyro  y = %d\r\n",icm20608_dev.gyro_y_adc);
+		printf("gyro  z = %d\r\n",icm20608_dev.gyro_z_adc);
+		printf("temp    = %d\r\n",icm20608_dev.temp_adc);
+#endif
+		delayms(120);
+		state = !state;
+		led_switch(LED0,state);	
+	}
+	return 0;
+}
+```
+文件 main.c 一开始有两个函数 integer_display 和 decimals_display，这两个函数用于在 LCD上显示获取到的 ICM20608 数据值，函数 integer_display 用于显示原始数据值，也就是整数值。
+函数 decimals_display 用于显示实际值，实际值扩大了 100 倍，此函数会提取出实际值的整数部分和小数部分并显示在 LCD 上。
+另一个重要的函数是 imx6ul_hardfpu_enable，这个函数用于开启 I.MX6U 的 NEON 和硬件 FPU(浮点运算单元)，因为本章使用到了浮点运算，而 I.MX6U 的Cortex-A7 是支持 NEON 和 FPU(VFPV4_D32)的，但是在使用 I.MX6U 的硬件 FPU 之前是先要开启的。
+第 110 行调用了函数 icm20608_init 来初始化 ICM20608，如果初始化失败的话就会在 LCD上闪烁提示语句。
+
+最后在 main 函数的 while 循环中不断的调用函数 icm20608_getdata 获取ICM20608 的传感器数据，并且显示在 LCD 上。实验程序编写就到这里结束了!
+
+接下来就是编译、下载和验证了。
+
+### 27.4 编译下载验证
+
+修改 Makefile 中的 TARGET 为 icm20608，然后在在 INCDIRS 和SRCDIRS 中加入“bsp/spi”和“bsp/icm20608”
+
+注意：
+![alt](./images/Snipaste_2024-12-03_20-29-52.png)
+第 49 行加入了“-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard”指令，这些指令用于指定编译浮点运算的时候使用硬件 FPU。
+因为本章使用到了浮点运算，而 I.MX6U 是支持硬件FPU 的，虽然我们在 main 函数中已经打开了 NEON 和 FPU，但是在编译相应 C 文件的时候也要指定使用硬件 FPU 来编译浮点运算。
+
+下载到SD卡运行即可
 
