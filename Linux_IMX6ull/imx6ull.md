@@ -9535,7 +9535,11 @@ I.MX6U 的 DDR3 接口关于 IO 有一些特殊的寄存器需要初始化，如
 
 .inc文件，我们就可以利用这个文件去进行DDR初始化了。
 具体我们要到系统编程中实现。
-逻辑编程下，芯片内置的SRAM已经够用256KB。
+
+(一般而言，DDR初始化由U-Boot自动完成)
+imxdownload中我们给bin文件添加了imx头数据其中有一个DCD部分，DCD中包含了ddr3的初始化。
+SRAM中先运行boot Rom（SROM 芯片内置rom）的代码，加载头文件后配置好了DDR内存，后续代码即在DDR中运行！
+
 
 ## 第二十四章 RGBLCD显示实验
 
@@ -9765,3 +9769,1504 @@ ATK7016屏幕：
 | 像素时钟     | 51.2 | MHz  |
 
 6. **像素时钟**
+
+像素时钟就是 RGB LCD 的时钟信号，以 ATK7016 这款屏幕为例，显示一帧图像所需要的时钟数就是：
+= (VSPW+VBP+LINE+VFP) * (HSPW + HBP + HOZVAL + HFP) 
+= (3 + 20 + 600 + 12) * (20 + 140 + 1024 + 160)
+= 635 * 1344
+= 853440。
+
+显示一帧图像需要853440个时钟数，那么显示60帧就是：853440 * 60 = 51206400≈51.2M，所以像素时钟就是 51.2MHz。
+
+I.MX6U 的 eLCDIF 接口时钟图如图所示：
+
+![alt](./images/Snipaste_2024-12-01_13-45-34.png)
+
+①、此部分是一个选择器，用于选择哪个 PLL 可以作为 LCDIF 时钟源，由寄存器
+CCM_CSCDR2 的位 LCDIF1_PRE_CLK_SEL(bit17:15)来决定，LCDIF1_PRE_CLK_SEL 选择设置如表所示：
+
+![alt](./images/Snipaste_2024-12-01_13-47-01.png)
+
+在第 16 章讲解 I.MX6U 时钟系统的时候说过有个专用的 PLL5 给 VIDEO 使用，所以LCDIF1_PRE_CLK_SEL 设置为 2。(PLL5作为时钟源)
+
+②、此部分是 LCDIF 时钟的预分频器，由寄存器 CCM_CSCDR2 的位 LCDIF1_PRED 来决定预分频值。可设置值为 0~7，分别对应 1~8 分频。
+
+![alt](./images/Snipaste_2024-12-01_13-48-39.png)
+
+③、此部分进一步分频，由寄存器 CBCMR 的位 LCDIF1_PODF 来决定分频值。可设置值为 0~7，分别对应 1~8 分频。
+
+![alt](./images/Snipaste_2024-12-01_13-49-28.png)
+
+④、此部分是一个选择器，选择 LCDIF 最终的根时钟，由寄存器 CSCDR2 的位LCDIF1_CLK_SEL 决定，LCDIF1_CLK_SEL 选择设置如表:
+
+![alt](./images/Snipaste_2024-12-01_13-50-35.png)
+
+这里肯定选择 PLL5 出来的那一路时钟作为 LCDIF 的根时钟，因此 LCDIF1_CLK_SEL 设置为 0。
+
+LCDIF 既然选择了 PLL5 作为时钟源，那么还需要初始化 PLL5，LCDIF 的时钟是由PLL5 和上图中的②、③这两个分频值决定的，所以需要对这三个进行合理的设置以搭配出所需的时钟值。
+我们就以 ATK7016 屏幕所需的 51.2MHz 为例，看看如何进行配置：
+
+PLL5 频率设置涉及到四个寄存器：CCM_PLL_VIDEO、CCM_PLL_VIDEO_NUM、CCM_PLL_VIDEO_DENOM 、 CCM_MISC2 。
+其 中 CCM_PLL_VIDEO_NUM 和CCM_PLL_VIDEO_DENOM 这两个寄存器是用于小数分频的，我们这里为了简单不使用小数分频，因此这两个寄存器设置为 0。
+
+PLL5 的时钟计算公式如下：
+PLL5_CLK = OSC24M * (loopDivider + (denominator / numerator)) / postDivider
+
+不使用小数分频的话 PLL5 时钟计算公式就可以简化为 ：
+PLL5_CLK = OSC24M * loopDivider / postDivider
+
+OSC24M 就是 24MHz 的有源晶振，现在的问题就是设置 loopDivider 和 postDivider。
+
+![alt](./images/Snipaste_2024-12-01_14-14-00.png)
+![alt](./images/Snipaste_2024-12-01_14-07-43.png)
+
+寄存器 CCM_PLL_VIDEO 用到的重要的位如下：
+
+**POST_DIV_SLECT(bit20:19)**：此位和寄存器 CCM_ANALOG_CCMSC2 的 VIDEO_DIV 位共同决定了 postDivider，为 0 的话是 4 分频，为 1 的话是 2 分频，为 2 的话是 1 分频。
+本章设置为 2，也就是 1 分频。
+
+**ENABLE(bit13)**：PLL5(PLL_VIDEO)使能位，为 1 的话使能 PLL5，为 0 的话关闭 PLL5。
+
+**DIV_SELECT(bit6:0)**：loopDivider 值，范围为 27~54，本章设置为 32。
+
+寄存器 CCM_ANALOG_MISC2 的位 VIDEO_DIV(bit31:30)与寄存器 CCM_PLL_VIDEO 的位 POST_DIV_SLECT(bit20:19)共同决定了 postDivider，通过这两个的配合可以获得 2、4、8、16 分频。
+
+本章将 VIDEO_DIV 设置为 0，也就是 1 分频，因此 postDivider 就是 1，loopDivider设置为 32，PLL5 的时钟频率就是：
+
+PLL5_CLK = OSC24M * loopDivider / postDivider
+= 24M * 32 / 1
+= 768MHz。
+
+PLL5 此时为 768MHz，在经过上图的②和③进一步分频，设置②中为 3 分频，也就是寄存器 CCM_CSCDR2 的位 LCDIF1_PRED(bit14:12)为 2。
+设置③中为 5 分频，就是寄存器CCM_CBCMR 的位 LCDIF1_PODF(bit25:23)为 4。
+设置好以后最终进入到 LCDIF 的时钟频率就是：768/3/5 =51.2MHz，这就是我们需要的像素时钟频率。
+
+7. **显存**
+
+在讲像素格式的时候就已经说过了，如果采用 ARGB8888 格式的话一个像素需要 4 个字节的内存来存放像素数据，那么 1024*600 分辨率就需要1024*600*4=2457600B≈2.4MB 内存。
+但是 RGB LCD 内部是没有内存的，所以就需要在开发板上的 DDR3 中分出一段内存作为 RGBLCD 屏幕的显存，我们如果要在屏幕上显示什么图像的话直接操作这部分显存即可。
+
+#### 24.1.2 eLCDIF接口
+
+eLCDIF 是 I.MX6U 自带的液晶屏幕接口，用于连接 RGB LCD 接口的屏幕，eLCDIF 接口特性如下：
+①、支持 RGB LCD 的 DE 模式。
+②、支持 VSYNC 模式以实现高速数据传输。
+③、支持 ITU-R BT.656 格式的 4:2:2 的 YCbCr 数字视频，并且将其转换为模拟 TV 信号。
+④、支持 8/16/18/24/32 位 LCD。
+eLCDIF 支持三种接口：MPU 接口、VSYNC 接口和 DOTCLK 接口，这三种接口区别如下：
+
+1. **MPU接口**
+
+MPU 接口用于在 I.MX6U 和 LCD 屏幕直接传输数据和命令，这个接口用于 6080/8080 接口的 LCD 屏幕，比如我们学习 STM32 的时候常用到的 MCU 屏幕。
+如果寄存器 LCDIF_CTRL 的位 DOTCLK_MODE、DVI_MODE 和 VSYNC_MODE 都为 0 的话就表示 LCDIF 工作在 MPU接口模式。
+关于 MPU 接口的详细信息以及时序参考《I.MX6ULL 参考手册》第 2150 页的“34.4.6MPU Interface”小节，本教程不使用 MPU 接口。
+
+2. **VSYNC接口**
+
+VSYNC 接口时序和 MPU 接口时序基本一样，只是多了 VSYNC 信号来作为帧同步，当LCDIF_CTRL 的位 VSYNC_MODE 为 1 的时候此接口使能。
+关于 VSYNC 接口的详细信息请参考《I.MX6ULL 参考手册》第 2152 页的“34.4.7 VSYNC Interface”小节，本教程不使用 VSYNC接口。
+
+3. **DOTCLK接口** 
+
+DOTCLK 接口就是用来连接 RGB LCD 接口屏幕的， 它包括 VSYNC、HSYNC、DOTCLK和 ENABLE(可选的)这四个信号，这样的接口通常被称为 RGB 接口。
+DOTCLK 接口时序如图：
+
+![alt](./images/Snipaste_2024-12-01_14-35-02.png)
+
+DOTCLK 接口就是连接 RGB 屏幕的，本教程使用的就是 DOTCLK 接口。
+
+eLCDIF 要驱动起来 RGB LCD 屏幕，重点是配置好上一小节讲解的那些时间参数即可，这个通过配置相应的寄存器就可以了。
+所以我们接下来看一下 eLCDIF 接口的几个重要的寄存器，首先看一下 LCDIF_CTRL 寄存器，此寄存器结构如图：
+![alt](./images/Snipaste_2024-12-01_14-38-31.png)
+
+寄存器<span style="color:red"><b> LCDIF_CTRL </b></span>用到的重要位如下:
+
+**SFTRST(bit31)**：eLCDIF 软复位控制位，当此位为 1 的话就会强制复位 LCD。
+
+**CLKGATE(bit30)**：正常运行模式下，此位必须为 0！如果此位为 1 的话时钟就不会进入到LCDIF。
+
+**BYPASS_COUNT(bit19)**：如果要工作在 DOTCLK 模式的话就此位必须为 1。
+
+**VSYNC_MODE(bit18)**：此位为 1 的话 LCDIF 工作在 VSYNC 接口模式。
+
+**DOTCLK_MODE(bit17)**：此位为 1 的话 LCDIF 工作在 DOTCLK 接口模式。
+
+**INPUT_DATA_SWIZZLE(bit15:14)**：输入数据字节交换设置，此位为 0 的话不交换字节也就是小端模式；
+为 1 的话交换所有字节，也就是大端模式；
+为 2 的话半字交换；
+为 3 的话在每个半字内进行字节交换。
+本章我们设置为 0，也就是不使用字节交换。
+
+**CSC_DATA_SWIZZLE(bit13:12)** ： CSC 数 据 字 节 交 换 设 置 ， 交 换 方 式 和INPUT_DATA_SWIZZLE 一样，本章设置为 0，不使用字节交换。
+
+**LCD_DATABUS_WIDTH(bit11:10)**：LCD 数据总线宽度，
+为 0 的话总线宽度为 16 位；
+为1 的话总线宽度为 8 位；
+为 2 的话总线宽度为 18 位；
+为 3 的话总线宽度为 24 位。
+本章我们使用 24 位总线宽度。
+
+**WORD_LENGTH(bit9:8)**：输入的数据格式，也就是像素数据宽度。
+为 0 的话每个像素 16位；
+为 1 的话每个像素 8 位；
+为 2 的话每个像素 18 位；
+为 3 的话每个像素 24 位。
+
+**MASTER(bit5)**：为 1 的话设置 eLCDIF 工作在主模式。
+
+**DATA_FORMAT_16_BIT(bit3)**：当此位为 1 并且 WORD_LENGTH 为 0 的时候像素格式为 ARGB555，当此位为 0 并且 WORD_LENGTH 为 0 的时候像素格式为 RGB565。
+
+**DATA_FORMAT_18_BIT(bit2)**：只有当 WORD_LENGTH 为 2 的时候此位才有效。
+此位为 0 的话低 18 位有效，像素格式为 RGB666，高 14 位数据无效。
+当此位为 1 的话高 18 位有效，像素格式依旧是 RGB666，但是低 14 位数据无效。
+
+**DATA_FORMAT_24_BIT(bit1)**：只有当 WORD_LENGTH 为 3 的时候此位才有效，为 0 的时候表示全部的 24 位数据都有效。
+为 1 的话实际输入的数据有效位只有 18 位，虽然输入的是24 位数据，但是每个颜色通道的高 2 位数据会被丢弃掉。
+
+**RUN(bit0)**：eLCDIF 接口运行控制位，当此位为 1 的话 eLCDIF 接口就开始传输数据，也就是 eLCDIF 的使能位。
+
+接下来看一看<span style="color:red"><b> LCDIF_CTRL1 </b></span>
+此寄存器我们只用到位BYTE_PACKING_FORMAT(bit19:16)，此位用来决定在 32 位的数据中哪些字节的数据有效，默认值为 0XF，也就是所有的字节有效。
+为 0 的话表示所有的字节都无效。
+如果显示的数据是24 位(ARGB 格式，但是 A 通道不传输)的话就设置此位为 0X7。
+
+接下来看一下寄存器 <span style="color:red"><b> LCDIF_TRANSFER_COUNT </b></span>，这个寄存器用来设置所连接的 RGB LCD 屏幕分辨率大小，此寄存器结构如图所示：
+
+![alt](./images/Snipaste_2024-12-01_14-46-41.png)
+
+寄存器LCDIF_TRANSFER_COUNT分为两部分，高16位和低16位，高16位是V_COUNT，是 LCD 的垂直分辨率。
+低 16 位是 H_COUNT，是 LCD 的水平分辨率。
+如果 LCD 分辨率为1024*600 的话，那么 V_COUNT 就是 600，H_COUNT 就是 1024。
+
+接下来看一下寄存器 <span style="color:red"><b> LCDIF_VDCTRL0 </b></span>，这个寄存器是 VSYNC 和 DOTCLK 模式控制寄存器 0，寄存器结构如图:
+
+![alt](./images/Snipaste_2024-12-01_14-47-41.png)
+
+寄存器 LCDIF_VDCTRL0 用到的重要位如下：
+
+**VSYNC_OEB(bit29)**：VSYNC 信号方向控制位，为 0 的话 VSYNC 是输出，为 1 的话VSYNC 是输入。
+
+**ENABLE_PRESENT(bit28)**：EBABLE 数据线使能位，也就是 DE 数据线。
+为 1 的话使能ENABLE 数据线，为 0 的话关闭 ENABLE 数据线。
+
+**VSYNC_POL(bit27)**：VSYNC 数据线极性设置位，为 0 的话 VSYNC 低电平有效，为 1 的话 VSYNC 高电平有效，要根据所使用的 LCD 数据手册来设置。
+
+**HSYNC_POL(bit26)**：HSYNC 数据线极性设置位，为 0 的话 HSYNC 低电平有效，为 1 的话 HSYNC 高电平有效，要根据所使用的 LCD 数据手册来设置。
+
+**DOTCLK_POL(bit25)**：DOTCLK 数据线(像素时钟线 CLK) 极性设置位，为 0 的话下降沿锁存数据，上升沿捕获数据，为 1 的话相反，要根据所使用的 LCD 数据手册来设置。
+
+**ENABLE_POL(bit24)**：EANBLE 数据线极性设置位，为 0 的话低电平有效，为 1 的话高电平有效。
+
+**VSYNC_PERIOD_UNIT(bit21)**：VSYNC 信号周期单位，为 0 的话 VSYNC 周期单位为像素时钟。为 1 的话 VSYNC 周期单位是水平行，如果使用 DOTCLK 模式话就要设置为 1。
+
+**VSYNC_PULSE_WIDTH_UNIT(bit20)** ： VSYNC信号脉冲宽度单位,和
+VSYNC_PERIOD_UNUT 一样，如果使用 DOTCLK 模式的话要设置为 1。
+
+**VSYNC_PULSE_WIDTH(bit17:0)**：VSPW 参数设置位。
+
+接下来看一下寄存器 <span style="color:red"><b> LCDIF_VDCTRL1 </b></span>，这个寄存器是 VSYNC 和 DOTCLK 模式控制寄存器 1，此寄存器只有一个功能，用来设置 VSYNC 总周期，就是：
+屏幕高度+VSPW+VBP+VFP。
+
+接下来看一下寄存器 <span style="color:red"><b> LCDIF_VDCTRL2 </b></span>，这个寄存器分为高 16 位和低 16 位两部分，高16位是 HSYNC_PULSE_WIDTH，用来设置 HSYNC 信号宽度，也就是 HSPW。
+低16位是 HSYNC_PERIOD，设置 HSYNC 总周期，就是：屏幕宽度+HSPW+HBP+HFP。
+
+接下来看一下寄存器 <span style="color:red"><b> LCDIF_VDCTRL3 </b></span>，此寄存器结构如图:
+
+![alt](./images/Snipaste_2024-12-01_14-52-10.png)
+
+寄存器 LCDIF_VDCTRL3 用到的重要位如下：
+
+**HORIZONTAL_WAIT_CNT(bit27:16)**：此位用于 DOTCLK 模式，用于设置 HSYNC 信号产生到有效数据产生之间的时间，也就是 HSPW+HBP。
+
+**VERTICAL_WAIR_CNT(bit15:0)**：和 HORIZONTAL_WAIT_CNT 一样，只是此位用于VSYNC 信号，也就是 VSPW+VBP。
+
+接下来看一下寄存器 <span style="color:red"><b> LCDIF_VDCTRL4 </b></span>，此寄存器结构如图:
+
+![alt](./images/Snipaste_2024-12-01_14-53-36.png)
+
+寄存器 LCDIF_VDCTRL4 用到的重要位如下：
+
+**SYNC_SIGNALS_ON(bit18)**：同步信号使能位，设置为 1 的话使能 VSYNC、HSYNC、DOTCLK 这些信号。
+
+**DOTCLK_H_VALID_DATA_CNT(bit15:0)**：设置 LCD 的宽度，也就是水平像素数量。
+
+最后在看一下寄存器 <span style="color:red">LCDIF_CUR_BUF 和 LCDIF_NEXT_BUF</span>，这两个寄存器分别为当前帧和下一帧缓冲区，也就是 LCD 显存。
+一般这两个寄存器保存同一个地址，也就是划分给 LCD的显存首地址。
+
+关于 eLCDIF 接口的寄存器就介绍到这里，关于这些寄存器详细的描述，请参考《I.MX6ULL参考手册》第 2165 页的 34.6 小节。本章我们使用 I.MX6U 的 eLCDIF 接口来驱动 ALIENTEK的 ATK7016 这款屏幕:
+
+1. **初始化 LCD 所使用的 IO**
+
+首先肯定是初始化 LCD 所示使用的 IO，将其复用为 eLCDIF 接口 IO
+
+2. **设置 LCD 的像素时钟**
+
+查阅所使用的 LCD 屏幕数据手册，或者自己计算出的时钟像素，然后设置 CCM 相应的寄存器。
+
+3. **配置 eLCDIF 接口**
+
+设置 LCDIF 的寄存器 CTRL、CTRL1、TRANSFER_COUNT、VDCTRL0~4、CUR_BUF 和NEXT_BUF。
+根据 LCD 的数据手册设置相应的参数。
+
+4. **编写 API 函数**
+
+驱动 LCD 屏幕的目的就是显示内容，所以需要编写一些基本的 API 函数，比如画点、画线、画圆函数，字符串显示函数等。
+
+### 24.2 硬件原理分析
+
+本试验用到的资源如下：
+①、指示灯 LED0。
+②、RGB LCD 接口。
+③、DDR3
+④、eLCDIF
+RGB LCD 接口在 I.MX6U-ALPHA 开发板底板上
+![alt](./images/Snipaste_2024-12-01_15-36-54.png)
+
+图中三个 SGM3157 的目的是在未使用 RGBLCD 的时候将 LCD_DATA7、LCD_DATA15 和 LCD_DATA23 这三个线隔离开来，因为 ALIENTEK 的屏幕的 LCD_R7/G7/B7这几个线用来设置 LCD 的 ID，所以这几根线上有上拉/下拉电阻。
+
+但是 I.MX6U 的 BOOT 设置也用到了 LCD_DATA7、LCD_DATA15 和 LCD_DATA23 这三个引脚，所以接上屏幕以后屏幕上的 ID 电阻就会影响到 BOOT 设置，会导致代码无法运行，所以先将其隔离开来.
+如果要使用 RGB LCD 屏幕的时候再通过 LCD_DE 将其“连接”起来。
+我们需要 40P 的 FPC 线将 ATK7016屏幕和 I.MX6U-ALPHA 开发板连接起来:
+
+补充：
+
+    SGM3157 是一款双向 SPDT（单刀双掷）CMOS 模拟开关。
+    它采用 1.8V 至 5.5V 单电源供电，具有低导通电阻、低电压和高带宽的特点。
+    高性能使其非常适合多种应用，例如便携式设备、音频和视频信号路由等。
+    低功耗也是使其成为理想选择的重要原因之一。
+芯片模型
+![alt](./images/Snipaste_2024-12-01_15-46-37.png)
+引脚介绍
+![alt](./images/Snipaste_2024-12-01_15-47-05.png)
+
+连接图：
+![alt](./images/Snipaste_2024-12-01_15-50-08.png)
+
+### 24.3 实验程序编写
+
+开发板光盘-> 1、裸机例程-> 15_lcd。
+
+本章实验在上一章例程的基础上完成，更改工程名字为“lcd”，然后在 bsp 文件夹下创建名为“lcd”的文件夹，在 bsp/lcd 中新建 bsp_lcd.c、bsp_lcd.h、bsp_lcdapi.c、bsp_lcdapi.h 和 font.h这五个文件。
+bsp_lcd.c 和 bsp_lcd.h 是 LCD 的驱动文件。
+bsp_lcdapi.c 和 bsp_lcdapi.h 是 LCD 的API 操作函数文件
+font.h 是字符集点阵数据数组文件
+
+```C
+bsp_lcd.h
+1 #ifndef _BSP_LCD_H
+2 #define _BSP_LCD_H
+3 /***************************************************************
+4 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5 文件名 : bsp_lcd.h
+6 作者 : 左忠凯
+7 版本 : V1.0
+8 描述 : LCD 驱动文件头文件。
+9 其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/3 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14
+15 /* 颜色宏定义 */
+16 #define LCD_BLUE 0x000000FF
+17 #define LCD_GREEN 0x0000FF00
+18 #define LCD_RED 0x00FF0000
+19 /* 省略掉其它宏定义，完整的请参考实验例程 */
+20 #define LCD_ORANGE 0x00FFA500
+21 #define LCD_TRANSPARENT 0x00000000
+22
+23 #define LCD_FRAMEBUF_ADDR (0x89000000) /* LCD 显存地址 */
+24
+25 /* LCD 控制参数结构体 */
+26 struct tftlcd_typedef{
+27 unsigned short height; /* LCD 屏幕高度 */
+28 unsigned short width; /* LCD 屏幕宽度 */
+29 unsigned char pixsize; /* LCD 每个像素所占字节大小 */
+30 unsigned short vspw; /* VSYNC 信号宽度 */
+31 unsigned short vbpd; /* 帧同步信号后肩 */
+32 unsigned short vfpd; /* 帧同步信号前肩 */
+33 unsigned short hspw; /* HSYNC 信号宽度 */
+34 unsigned short hbpd; /* 水平同步信号后见肩 */
+35 unsigned short hfpd; /* 水平同步信号前肩 */
+36 unsigned int framebuffer; /* LCD 显存首地址 */
+37 unsigned int forecolor; /* 前景色 */
+38 unsigned int backcolor; /* 背景色 */
+39 };
+40
+41 extern struct tftlcd_typedef tftlcd_dev; //声明一个外部结构体
+42
+43 /* 函数声明 */
+44 void lcd_init(void);
+45 void lcdgpio_init(void);
+46 void lcdclk_init(unsigned char loopDiv, unsigned char prediv，unsigned char div);
+47 void lcd_reset(void);
+48 void lcd_noreset(void);
+49 void lcd_enable(void);
+50 void video_pllinit(unsigned char loopdivi, unsigned char postdivi);
+51 inline void lcd_drawpoint(unsigned short x,unsigned short y,unsigned int color);
+52 inline unsigned int lcd_readpoint(unsigned short x,unsigned short y);
+53 void lcd_clear(unsigned int color);
+54 void lcd_fill(unsigned short x0, unsigned short y0,unsigned short x1, unsigned short y1,unsigned int color);
+55 #endif
+```
+在文件 bsp_lcd.h 中一开始定义了一些常用的颜色宏定义，颜色格式都是 ARGB8888 的。
+第 23 行的宏 LCD_FRAMEBUF_ADDR 是显存首地址，此处将显存首地址放到了 0X89000000地址处。
+这个要根据所使用的 LCD 屏幕大小和 DDR 内存大小来确定的，前面我们说了 ATK7016这款 RGB 屏幕所需的显存大小为 2.4MB，而 I.MX6U-ALPHA 开发板配置的 DDR 有 256 和 512MB 两种类型，内存地址范围分别为 0X80000000~0X90000000 和 0X80000000~0XA0000000。
+所以 LCD 显存首地址选择为 0X89000000 不管是 256MB 还是 512MB 的 DDR 都可以使用。
+
+第 26 行的结构体 tftlcd_typedef 是 RGB LCD 的控制参数结构体，里面包含了跟 LCD 配置有关的一些成员变量。最后就是一些变量和函数是声明。
+
+```C
+bsp_lcd.c
+1 #include "bsp_lcd.h"
+2 #include "bsp_gpio.h"
+3 #include "bsp_delay.h"
+4 #include "stdio.h"
+5 
+6 /* 液晶屏参数结构体 */
+7 struct tftlcd_typedef tftlcd_dev;
+8
+9 /*
+10 * @description : 始化 LCD
+11 * @param : 无
+12 * @return : 无
+13 */
+14 void lcd_init(void)
+15 {
+16  lcdgpio_init(); /* 初始化 IO */
+17  lcdclk_init(32, 3, 5); /* 初始化 LCD 时钟 */
+18
+19  lcd_reset(); /* 复位 LCD */
+20  delayms(10); /* 延时 10ms */
+21  lcd_noreset(); /* 结束复位 */
+22
+23  /* RGB LCD 参数结构体初始化 */
+24  tftlcd_dev.height = 600; /* 屏幕高度 */
+25  tftlcd_dev.width = 1024; /* 屏幕宽度 */
+26  tftlcd_dev.pixsize = 4; /* ARGB8888 模式，每个像素 4 字节 */
+27  tftlcd_dev.vspw = 3; /* VSYNC 信号宽度 */
+28  tftlcd_dev.vbpd = 20; /* 帧同步信号后肩 */
+29  tftlcd_dev.vfpd = 12; /* 帧同步信号前肩 */
+30  tftlcd_dev.hspw = 20; /* HSYNC 信号宽度 */
+31  tftlcd_dev.hbpd = 140; /* 水平同步信号后见肩 */
+32  tftlcd_dev.hfpd = 160; /* 水平同步信号前肩 */
+33  tftlcd_dev.framebuffer = LCD_FRAMEBUF_ADDR; /* 帧缓冲地址 */
+34  tftlcd_dev.backcolor = LCD_WHITE; /* 背景色为白色 */
+35  tftlcd_dev.forecolor = LCD_BLACK; /* 前景色为黑色 */
+36
+37 /* 初始化 ELCDIF 的 CTRL 寄存器
+38  * bit [31] 0 : 停止复位
+39  * bit [19] 1 : 旁路计数器模式
+40  * bit [17] 1 : LCD 工作在 dotclk 模式
+41  * bit [15:14] 00 : 输入数据不交换
+42  * bit [13:12] 00 : CSC 不交换
+43  * bit [11:10] 11 : 24 位总线宽度
+44  * bit [9:8] 11 : 24 位数据宽度,也就是 RGB888
+45  * bit [5] 1 : elcdif 工作在主模式
+46  * bit [1] 0 : 所有的 24 位均有效
+47  */
+48  LCDIF->CTRL |= (1 << 19) | (1 << 17) | (0 << 14) | (0 << 12) |
+49                (3 << 10) | (3 << 8) | (1 << 5) | (0 << 1);
+50 /*
+51  * 初始化 ELCDIF 的寄存器 CTRL1
+52  * bit [19:16] : 0X7 ARGB 模式下，传输 24 位数据，A 通道不用传输
+53  */
+54  LCDIF->CTRL1 = 0X7 << 16;
+55 
+56 /*
+57  * 初始化 ELCDIF 的寄存器 TRANSFER_COUNT 寄存器
+58  * bit [31:16] : 高度
+59  * bit [15:0] : 宽度
+60  */
+61  LCDIF->TRANSFER_COUNT = (tftlcd_dev.height << 16) | (tftlcd_dev.width << 0);
+62 
+63 /*
+64  * 初始化 ELCDIF 的 VDCTRL0 寄存器
+65  * bit [29] 0 : VSYNC 输出
+66  * bit [28] 1 : 使能 ENABLE 输出
+67  * bit [27] 0 : VSYNC 低电平有效
+68  * bit [26] 0 : HSYNC 低电平有效
+69  * bit [25] 0 : DOTCLK 上升沿有效
+70  * bit [24] 1 : ENABLE 信号高电平有效
+71  * bit [21] 1 : DOTCLK 模式下设置为 1
+72  * bit [20] 1 : DOTCLK 模式下设置为 1
+73  * bit [17:0] : vspw 参数
+74  */
+75  LCDIF->VDCTRL0 = 0; /* 先清零 */
+76  LCDIF->VDCTRL0 = (0 << 29) | (1 << 28) | (0 << 27) |
+77                   (0 << 26) | (0 << 25) | (1 << 24) |
+78                   (1 << 21) | (1 << 20) | (tftlcd_dev.vspw << 0);
+79 /*
+80  * 初始化 ELCDIF 的 VDCTRL1 寄存器，设置 VSYNC 总周期
+81  */ 
+82  LCDIF->VDCTRL1 = tftlcd_dev.height + tftlcd_dev.vspw + tftlcd_dev.vfpd + tftlcd_dev.vbpd;
+83
+84 /*
+85  * 初始化 ELCDIF 的 VDCTRL2 寄存器，设置 HSYNC 周期
+86  * bit[31:18] ：hsw
+87  * bit[17:0] : HSYNC 总周期
+88  */
+89  LCDIF->VDCTRL2 = (tftlcd_dev.hspw << 18) | (tftlcd_dev.width + tftlcd_dev.hspw + tftlcd_dev.hfpd + tftlcd_dev.hbpd);
+90 
+91 /*
+92  * 初始化 ELCDIF 的 VDCTRL3 寄存器，设置 HSYNC 周期
+93  * bit[27:16] ：水平等待时钟数
+94  * bit[15:0] : 垂直等待时钟数
+95  */
+96  LCDIF->VDCTRL3 = ((tftlcd_dev.hbpd + tftlcd_dev.hspw) << 16) | (tftlcd_dev.vbpd + tftlcd_dev.vspw);
+97
+98 /*
+99  * 初始化 ELCDIF 的 VDCTRL4 寄存器，设置 HSYNC 周期
+100 * bit[18] 1 : 当使用 VSHYNC、HSYNC、DOTCLK 的话此为置 1
+101 * bit[17:0] : 宽度
+102 */
+103 
+104  LCDIF->VDCTRL4 = (1<<18) | (tftlcd_dev.width);
+105
+106 /*
+107  * 初始化 ELCDIF 的 CUR_BUF 和 NEXT_BUF 寄存器
+108  * 设置当前显存地址和下一帧的显存地址
+109  */
+110  LCDIF->CUR_BUF = (unsigned int)tftlcd_dev.framebuffer;
+111  LCDIF->NEXT_BUF = (unsigned int)tftlcd_dev.framebuffer;
+112
+113  lcd_enable(); /* 使能 LCD */
+114  delayms(10);
+115  lcd_clear(LCD_WHITE); /* 清屏 */
+116
+117 }
+118
+119 /*
+120  * @description : LCD GPIO 初始化
+121  * @param : 无
+122  * @return : 无
+123  */
+124 void lcdgpio_init(void)
+125 {
+126     gpio_pin_config_t gpio_config;
+127
+128     /* 1、IO 初始化复用功能 */
+129     IOMUXC_SetPinMux(IOMUXC_LCD_DATA00_LCDIF_DATA00,0);
+130     IOMUXC_SetPinMux(IOMUXC_LCD_DATA01_LCDIF_DATA01,0);
+131     IOMUXC_SetPinMux(IOMUXC_LCD_DATA02_LCDIF_DATA02,0);
+132     IOMUXC_SetPinMux(IOMUXC_LCD_DATA03_LCDIF_DATA03,0);
+        ……  
+154     IOMUXC_SetPinMux(IOMUXC_LCD_ENABLE_LCDIF_ENABLE,0);
+155     IOMUXC_SetPinMux(IOMUXC_LCD_HSYNC_LCDIF_HSYNC,0);
+156     IOMUXC_SetPinMux(IOMUXC_LCD_VSYNC_LCDIF_VSYNC,0);
+157     IOMUXC_SetPinMux(IOMUXC_GPIO1_IO08_GPIO1_IO08,0); /* 背光引脚*/
+158 
+159     /* 2、配置 LCD IO 属性
+160      *bit 16:0 HYS 关闭
+161      *bit [15:14]: 0 默认 22K 上拉
+162      *bit [13]: 0 pull 功能
+163      *bit [12]: 0 pull/keeper 使能
+164      *bit [11]: 0 关闭开路输出
+165      *bit [7:6]: 10 速度 100Mhz
+166      *bit [5:3]: 111 驱动能力为 R0/7
+167      *bit [0]: 1 高转换率
+168      */
+169     IOMUXC_SetPinConfig(IOMUXC_LCD_DATA00_LCDIF_DATA00,0xB9);
+170     IOMUXC_SetPinConfig(IOMUXC_LCD_DATA01_LCDIF_DATA01,0xB9);
+        ……  
+193     IOMUXC_SetPinConfig(IOMUXC_LCD_CLK_LCDIF_CLK,0xB9);
+194     IOMUXC_SetPinConfig(IOMUXC_LCD_ENABLE_LCDIF_ENABLE,0xB9);
+195     IOMUXC_SetPinConfig(IOMUXC_LCD_HSYNC_LCDIF_HSYNC,0xB9);
+196     IOMUXC_SetPinConfig(IOMUXC_LCD_VSYNC_LCDIF_VSYNC,0xB9);
+197     IOMUXC_SetPinConfig(IOMUXC_GPIO1_IO08_GPIO1_IO08,0xB9);
+198 
+199     /* GPIO 初始化 */
+200     gpio_config.direction = kGPIO_DigitalOutput; /* 输出 */
+201     gpio_config.outputLogic = 1; /* 默认关闭背光 */
+202     gpio_init(GPIO1, 8, &gpio_config); /* 背光默认打开 */
+203     gpio_pinwrite(GPIO1, 8, 1); /* 打开背光 */
+204 }
+205
+206 /*
+207  * @description : LCD 时钟初始化, LCD 时钟计算公式如下：
+208  * LCD CLK = 24 * loopDiv / prediv / div
+209  * @param - loopDiv : loopDivider 值
+210  * @param - loopDiv : lcdifprediv 值
+211  * @param - div : lcdifdiv 值
+212  * @return : 无
+213  */
+214  void lcdclk_init(unsigned char loopDiv, unsigned char prediv,unsigned char div)
+215 {
+216     /* 先初始化 video pll
+217      * VIDEO PLL = OSC24M * (loopDivider + (denominator /
+            numerator)) / postDivider
+218      *不使用小数分频器，因此 denominator 和 numerator 设置为 0
+219      */
+220     CCM_ANALOG->PLL_VIDEO_NUM = 0; /* 不使用小数分频器 */
+221     CCM_ANALOG->PLL_VIDEO_DENOM = 0;
+222
+223     /*
+224      * PLL_VIDEO 寄存器设置
+225      * bit[13] : 1 使能 VIDEO PLL 时钟
+226      * bit[20:19] : 2 设置 postDivider 为 1 分频
+227      * bit[6:0] : 32 设置 loopDivider 寄存器
+228      */
+229     CCM_ANALOG->PLL_VIDEO = (2 << 19) | (1 << 13) | (loopDiv << 0);
+230
+231     /*
+232      * MISC2 寄存器设置
+233      * bit[31:30]: 0 VIDEO 的 post-div 设置，1 分频
+234      */
+235     CCM_ANALOG->MISC2 &= ~(3 << 30);
+236     CCM_ANALOG->MISC2 = 0 << 30;
+237
+238     /* LCD 时钟源来源与 PLL5，也就是 VIDEO PLL */
+239     CCM->CSCDR2 &= ~(7 << 15);
+240     CCM->CSCDR2 |= (2 << 15); /* 设置 LCDIF_PRE_CLK 使用 PLL5 */
+241
+242     /* 设置 LCDIF_PRE 分频 */
+243     CCM->CSCDR2 &= ~(7 << 12);
+244     CCM->CSCDR2 |= (prediv - 1) << 12; /* 设置分频 */
+245
+246     /* 设置 LCDIF 分频 */
+247     CCM->CBCMR &= ~(7 << 23);
+248     CCM->CBCMR |= (div - 1) << 23;
+249
+250     /* 设置 LCD 时钟源为 LCDIF_PRE 时钟 */
+251     CCM->CSCDR2 &= ~(7 << 9); /* 清除原来的设置 */
+252     CCM->CSCDR2 |= (0 << 9); /* LCDIF_PRE 时钟源选择 LCDIF_PRE 时钟 */
+253 }
+254
+255 /*
+256  * @description : 复位 ELCDIF 接口
+257  * @param : 无
+258  * @return : 无
+259  */
+260 void lcd_reset(void)
+261 {
+262     LCDIF->CTRL = 1<<31; /* 强制复位 */
+263 }
+264
+265 /*
+266  * @description : 结束复位 ELCDIF 接口
+267  * @param : 无
+268  * @return : 无
+269  */
+270 void lcd_noreset(void)
+271 {
+272     LCDIF->CTRL = 0<<31; /* 取消强制复位 */
+273 }
+274
+275 /*
+276  * @description : 使能 ELCDIF 接口
+277  * @param : 无
+278  * @return : 无
+279  */
+280 void lcd_enable(void)
+281 {
+282     LCDIF->CTRL |= 1<<0; /* 使能 ELCDIF */
+283 }
+284
+285 /*
+286  * @description : 画点函数
+287  * @param - x : x 轴坐标
+288  * @param - y : y 轴坐标
+289  * @param - color : 颜色值
+290  * @return : 无
+291  */
+292 inline void lcd_drawpoint(unsigned short x,unsigned short y,
+                              unsigned int color)
+293 {
+294 *(unsigned int*)((unsigned int)tftlcd_dev.framebuffer +
+295        tftlcd_dev.pixsize * (tftlcd_dev.width * y + x)) = color;
+296 }
+297
+298
+299 /*
+300  * @description : 读取指定点的颜色值
+301  * @param - x : x 轴坐标
+302  * @param - y : y 轴坐标
+303  * @return : 读取到的指定点的颜色值
+304  */
+305 inline unsigned int lcd_readpoint(unsigned short x,
+                                     unsigned short y)
+306 {
+307     return *(unsigned int*)((unsigned int)tftlcd_dev.framebuffer +
+308             tftlcd_dev.pixsize * (tftlcd_dev.width * y + x));
+309 }
+310
+311 /*
+312  * @description : 清屏
+313  * @param - color : 颜色值
+314  * @return : 读取到的指定点的颜色值
+315  */
+316 void lcd_clear(unsigned int color)
+317 {
+318     unsigned int num;
+319     unsigned int i = 0;
+320
+321     unsigned int *startaddr=(unsigned int*)tftlcd_dev.framebuffer;
+322     num=(unsigned int)tftlcd_dev.width * tftlcd_dev.height;
+323     for(i = 0; i < num; i++)
+324     {
+325         startaddr[i] = color;
+326     }
+327 }
+328
+329 /*
+330  * @description : 以指定的颜色填充一块矩形
+331  * @param - x0 : 矩形起始点坐标 X 轴
+332  * @param - y0 : 矩形起始点坐标 Y 轴
+333  * @param - x1 : 矩形终止点坐标 X 轴
+334  * @param - y1 : 矩形终止点坐标 Y 轴
+335  * @param - color : 要填充的颜色
+336  * @return : 读取到的指定点的颜色值
+337  */
+338 void lcd_fill(unsigned short x0, unsigned short y0,
+339         unsigned short x1, unsigned short y1,unsigned int color)
+340 {
+341     unsigned short x, y;
+342
+343     if(x0 < 0) x0 = 0;
+344     if(y0 < 0) y0 = 0;
+345     if(x1 >= tftlcd_dev.width) x1 = tftlcd_dev.width - 1;
+346     if(y1 >= tftlcd_dev.height) y1 = tftlcd_dev.height - 1;
+347
+348     for(y = y0; y <= y1; y++)
+349     {
+350         for(x = x0; x <= x1; x++)
+351             lcd_drawpoint(x, y, color);
+352     }
+353 }
+```
+文件 bsp_lcd.c 里面一共有 10 个函数，第一个函数是 lcd_init，这个是 LCD 初始化函数，此函数先调用 LCD 的 IO 初始化函数、时钟初始化函数、复位函数等，然后会按照我们前面讲解的步骤初始化 eLCDIF 相关的寄存器，最后使能 eLCDIF。
+第二个函数是 lcdgpio_init，这个是LCD 的 IO 初始化函数。
+第三个函数 lcdclk_init 是 LCD 的时钟初始化函数。
+第四个函数 lcd_reset和第五个函数 lcd_noreset 分别为复位 LCD 的停止 LCD 复位函数。
+第六个函数 lcd_enable 是eLCDIF 使能函数，用于使能 eLCDIF。
+第七个和第八个是画点和读点函数，分别为 lcd_drawpoint和 lcd_readpoint，通过这两个函数就可以在 LCD 的指定像素点上显示指定的颜色，或者读取指定像素点的颜色。
+第九个函数 lcd_clear 是清屏函数，使用指定的颜色清除整个屏幕。
+最后一个函数 lcd_fill 是填充函数，使用此函数的时候需要指定矩形的起始坐标、终止坐标和填充颜色，这样就可以填充出一个矩形区域。
+
+以上及完成了LCD的硬件初始化工作。
+在 bsp_lcdapi.h 中输入如下所示内容：
+```C
+bsp_lcdapi.h
+1 #ifndef BSP_LCDAPI_H
+2 #define BSP_LCDAPI_H
+3 /***************************************************************
+4 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved.
+5 文件名 : bsp_lcdapi.h
+6 作者 : 左忠凯
+7 版本 : V1.0
+8 描述 : LCD 显示 API 函数。
+9 其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/3/18 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14 #include "bsp_lcd.h"
+15
+16 /* 函数声明 */
+17 void lcd_drawline(unsigned short x1, unsigned short y1, unsigned
+                    short x2, unsigned short y2);
+18 void lcd_draw_rectangle(unsigned short x1, unsigned short y1,
+                    unsigned short x2, unsigned short y2);
+19 void lcd_draw_circle(unsigned short x0,unsigned short y0,
+                    unsigned char r);
+20 void lcd_showchar(unsigned short x,unsigned short y,
+                    unsigned char num,unsigned char size,
+                    unsigned char mode);
+21 unsigned int lcd_pow(unsigned char m,unsigned char n);
+22 void lcd_shownum(unsigned short x, unsigned short y,
+                    unsigned int num, unsigned char len,
+                    unsigned char size);
+23 void lcd_showxnum(unsigned short x, unsigned short y,
+                    unsigned int num, unsigned char len,
+                    unsigned char size, unsigned char mode);
+24 void lcd_show_string(unsigned short x,unsigned short y,
+                    unsigned short width, unsigned short height,
+                    unsigned char size, char *p);
+25 #endif
+```
+
+```C
+bsp_lcdapi.c
+1 #include "bsp_lcdapi.h"
+2 #include "font.h"
+3
+4 /*
+5  * @description : 画线函数
+6  * @param - x1 : 线起始点坐标 X 轴
+7  * @param - y1 : 线起始点坐标 Y 轴
+8  * @param - x2 : 线终止点坐标 X 轴
+9  * @param - y2 : 线终止点坐标 Y 轴
+10 * @return : 无
+11 */
+12 void lcd_drawline(unsigned short x1, unsigned short y1,
+                     unsigned short x2, unsigned short y2)
+13 {
+14      u16 t;
+15      int xerr = 0, yerr = 0, delta_x, delta_y, distance;
+16      int incx, incy, uRow, uCol;
+17      delta_x = x2 - x1; /* 计算坐标增量 */
+18      delta_y = y2 - y1;
+19      uRow = x1;
+20      uCol = y1;
+21      if(delta_x > 0) incx = 1; /* 设置单步方向 */
+22      else if(delta_x==0) incx = 0; /* 垂直线 */
+23      else
+24      {
+25          incx = -1;
+26          delta_x = -delta_x;
+27      }
+28 
+29      if(delta_y>0) incy=1;
+30      else if(delta_y == 0) incy=0; /* 水平线 */
+31      else
+32      {
+33          incy = -1;
+34          delta_y = -delta_y;
+35      }
+36      if( delta_x > delta_y) distance = delta_x; /*选取基本增量坐标轴 */
+37      else distance = delta_y;
+38      for(t = 0; t <= distance+1; t++ ) /* 画线输出 */
+39      {
+40          lcd_drawpoint(uRow, uCol, tftlcd_dev.forecolor);/* 画点 */
+41          xerr += delta_x ;
+42          yerr += delta_y ;
+43          if(xerr > distance)
+44          {
+45              xerr -= distance;
+46              uRow += incx;
+47          }
+48          if(yerr > distance)
+49          {
+50              yerr -= distance;
+51              uCol += incy;
+52          }
+53      }
+54 }
+55 
+56 /*
+57  * @description : 画矩形函数
+58  * @param - x1 : 矩形坐上角坐标 X 轴
+59  * @param - y1 : 矩形坐上角坐标 Y 轴
+60  * @param - x2 : 矩形右下角坐标 X 轴
+61  * @param - y2 : 矩形右下角坐标 Y 轴
+62  * @return : 无
+63  */
+64 void lcd_draw_rectangle(unsigned short x1, unsigned short y1,
+                           unsigned short x2, unsigned short y2)
+65 {
+66      lcd_drawline(x1, y1, x2, y1);
+67      lcd_drawline(x1, y1, x1, y2);
+68      lcd_drawline(x1, y2, x2, y2);
+69      lcd_drawline(x2, y1, x2, y2);
+70 }
+71
+72 /*
+73  * @description : 在指定位置画一个指定大小的圆
+74  * @param - x0 : 圆心坐标 X 轴
+75  * @param - y0 : 圆心坐标 Y 轴
+76  * @param - y2 : 圆形半径
+77  * @return : 无
+78  */
+79 void lcd_draw_circle(unsigned short x0,unsigned short y0,
+                        unsigned char r)
+80 {
+81      int mx = x0, my = y0;
+82      int x = 0, y = r;
+83
+84      int d = 1 - r;
+85      while(y > x) /* y>x 即第一象限的第 1 区八分圆 */
+86      {
+87          lcd_drawpoint(x + mx, y + my, tftlcd_dev.forecolor);
+88          lcd_drawpoint(y + mx, x + my, tftlcd_dev.forecolor);
+89          lcd_drawpoint(-x + mx, y + my, tftlcd_dev.forecolor);
+90          lcd_drawpoint(-y + mx, x + my, tftlcd_dev.forecolor);
+91          
+92          lcd_drawpoint(-x + mx, -y + my, tftlcd_dev.forecolor);
+93          lcd_drawpoint(-y + mx, -x + my, tftlcd_dev.forecolor);
+94          lcd_drawpoint(x + mx, -y + my, tftlcd_dev.forecolor);
+95          lcd_drawpoint(y + mx, -x + my, tftlcd_dev.forecolor);
+96          if( d < 0)
+97          {
+98              d = d + 2 * x + 3;
+99          }
+100         else
+101         {
+102             d= d + 2 * (x - y) + 5;
+103             y--;
+104         }
+105         x++;
+106     }
+107 }
+108
+109 /*
+110  * @description : 在指定位置显示一个字符
+111  * @param - x : 起始坐标 X 轴
+112  * @param - y : 起始坐标 Y 轴
+113  * @param - num : 显示字符
+114  * @param – size : 字体大小, 可选 12/16/24/32
+115  * @param – mode : 叠加方式(1)还是非叠加方式(0)
+116  * @return : 无
+117  */
+118 void lcd_showchar(unsigned short x, unsigned short y,
+119                   unsigned char num, unsigned char size,
+120                   unsigned char mode)
+121 {
+122     unsigned char temp, t1, t;
+123     unsigned short y0 = y;
+        /* 得到字体一个字符对应点阵集所占的字节数 */
+124     unsigned char csize = (size / 8+ ((size % 8) ? 1 : 0)) *
+                              (size / 2);
+125     num = num - ' '; /* 得到偏移后的值（ASCII 字库是从空格开始取模，
+                         所以-' '就是对应字符的字库） */
+126     for(t = 0; t < csize; t++)
+127     {
+128     if(size == 12) temp = asc2_1206[num][t]; /* 调用 1206 字体 */
+129     else if(size == 16)temp = asc2_1608[num][t];/* 调用 1608 字体 */
+130     else if(size == 24)temp = asc2_2412[num][t];/* 调用 2412 字体 */
+131     else if(size == 32)temp = asc2_3216[num][t];/* 调用 3216 字体 */
+132     else return; /* 没有的字库 */
+133     for(t1 = 0; t1 < 8; t1++)
+134     {
+135         if(temp & 0x80)lcd_drawpoint(x, y, tftlcd_dev.forecolor);
+136         else if(mode==0)lcd_drawpoint(x, y,tftlcd_dev.backcolor);
+137         temp <<= 1;
+138         y++;
+139         if(y >= tftlcd_dev.height) return; /* 超区域了 */
+140         if((y - y0) == size)
+141         {
+142         y = y0;
+143         x++;
+144         if(x >= tftlcd_dev.width) return; /* 超区域了 */
+145         break;
+146         }
+147     }
+148     }
+149 }
+150
+... 
+下面的代码不在列出，详情请见历程
+```
+
+文件 bsp_lcdapi.h 里面都是一些 LCD 的 API 操作函数，比如画线、画矩形、画圆、显示数字、显示字符和字符串等函数。
+这些函数都是从 STM32 例程里面移植过来的，如果学习过ALIENTEK 的 STM32 教程的话就会很熟悉，都是一些纯软件的东西。
+lcd_showchar 函数是字符显示函数，要理解这个函数就得先了解一下字符（ASCII 字符集）在 LCD 上的显示原理。要显示字符，我们先要有字符的点阵数据，ASCII 常用的字符集总共有95个，这里不一一列出了。
+
+我们先要得到这个字符集的点阵数据，这里我们介绍一个款很好的字符提取软件：PCtoLCD2002 完美版。
+该软件可以提供各种字符，包括汉字（字体和大小都可以自己设置）阵提取，且取模方式可以设置好几种，常用的取模方式，该软件都支持。该软件还支持图形模式，也就是用户可以自己定义图片的大小，然后画图，根据所画的图形再生成点阵数据，这功能在制作图标或图片的时候很有用。
+
+软件如图：
+![alt](./images/Snipaste_2024-12-01_16-43-27.png)
+
+然后我们点击字模选项按钮 进入字模选项设置界面。
+设置界面中点阵格式和取模方式等:
+![alt](./images/Snipaste_2024-12-01_16-44-44.png)
+
+上图设置的取模方式，在右上角的取模说明里面有，即：从第一列开始向下每取 8 个点作为一个字节，如果最后不足 8 个点就补满 8 位。
+取模顺序是从高到低，即第一个点作为最高位。如*-------取为 10000000。
+![alt](./images/Snipaste_2024-12-01_16-45-28.png)
+
+从上到下，从左到右，高位在前。
+我们按这样的取模方式，然后把 ASCII 字符集按 12 * 6 大小、16 * 8、24 * 12 和 32 * 16 大小取模出来（对应汉字大小为 12 * 12、16 * 16、24 * 24 和 32 * 32，字符的只有汉字的一半大！）。
+将取出的点阵数组保存在 font.h 里面，每个 12 * 6 的字符占用 12 个字节，每个 16 * 8 的字符占用 16 个字节，每个 24 * 12 的字符占用 36 个字节，每个 32 * 16 的字符占用 64 个字节。
+font.h 中的字符集点阵数据数组 asc2_1206、asc2_1608、asc2_2412 和 asc2_3216就对应着这四个大小字符集，具体见 font.h 部分代码（该部分我们不再这里列出来了，请大家参考光盘里面的代码）。
+
+最后就可以利用main.c进行测试了：
+
+```C
+1 #include "bsp_clk.h"
+2 #include "bsp_delay.h"
+3 #include "bsp_led.h"
+4 #include "bsp_beep.h"
+5 #include "bsp_key.h"
+6 #include "bsp_int.h"
+7 #include "bsp_uart.h"
+8 #include "stdio.h"
+9 #include "bsp_lcd.h"
+10 #include "bsp_lcdapi.h"
+11
+12
+13 /* 背景颜色数组 */
+14 unsigned int backcolor[10] = {
+15      LCD_BLUE, LCD_GREEN, LCD_RED, LCD_CYAN, LCD_YELLOW,
+16      LCD_LIGHTBLUE, LCD_DARKBLUE, LCD_WHITE, LCD_BLACK, LCD_ORANGE
+17
+18 };
+19
+20 /*
+21  * @description : main 函数
+22  * @param : 无
+23  * @return : 无
+24  */
+25 int main(void)
+26 {
+27  unsigned char index = 0;
+28  unsigned char state = OFF;
+29
+30  int_init(); /* 初始化中断(一定要最先调用！) */
+31  imx6u_clkinit(); /* 初始化系统时钟 */
+32  delay_init(); /* 初始化延时 */
+33  clk_enable(); /* 使能所有的时钟 */
+34  led_init(); /* 初始化 led */
+35  beep_init(); /* 初始化 beep */
+36  uart_init(); /* 初始化串口，波特率 115200 */
+37  lcd_init(); /* 初始化 LCD */
+38
+39  tftlcd_dev.forecolor = LCD_RED;
+40  lcd_show_string(10,10,400,32,32,(char*)"ALPHA-IMX6ULELCD TEST");
+41  lcd_draw_rectangle(10, 52, 1014, 290); /* 绘制矩形框 */
+42  lcd_drawline(10, 52,1014, 290); /* 绘制线条 */
+43  lcd_drawline(10, 290,1014, 52); /* 绘制线条 */
+44  lcd_draw_Circle(512, 171, 119); /* 绘制圆形 */
+46  while(1)
+47  {
+48      index++;
+49      if(index == 10) index = 0;
+50      lcd_fill(0, 300, 1023, 599, backcolor[index]);
+51      lcd_show_string(800,10,240,32,32,(char*)"INDEX=");
+52      lcd_shownum(896,10, index, 2, 32); /* 显示数字，叠加显示 */
+53
+54      state = !state;
+55      led_switch(LED0,state);
+56      delayms(1000); /* 延时一秒 */
+57  }
+58  return 0;
+59 }
+```
+第 37 行调用函数 lcd_init 初始化 LCD。
+第 39 行设置前景色，也就是画笔颜色为红色。
+第 40~44 行都是调用 bsp_lcdapi.c 中的 API 函数在 LCD 上绘制各种图形和显示字符串。
+第 46 行的 while 循环中每隔 1S 中就调用函数 lcd_fill 填充指定的区域，并且显示 index值。
+main 函数很简单，重点就是初始化 LCD，然后调用 LCD 的 API 函数进行一些常用的操作，比如画线、画矩形、显示字符串和数字等等。
+
+实际操作可以参考STM32 OLED屏幕使用。
+
+### 24.4 编译下载
+#### 24.4.1 编写 Makefile 和链接脚本
+
+修改 Makefile 中的 TARGET 为 lcd，然后在 INCDIRS 和 SRCDIRS 中加入“bsp/lcd”。
+连接脚本保持不变。
+
+#### 24.4.2 
+
+下载即可。
+
+## 第二十五章 RTC实时时钟
+
+实时时钟是很常用的一个外设，通过实时时钟我们就可以知道年、月、日和时间等信息。
+因此在需要记录时间的场合就需要实时时钟，可以使用专用的实时时钟芯片来完成此功能，但是现在大多数的 MCU 或者 MPU 内部就已经自带了实时时钟外设模块。
+比如 I.MX6U 内部的SNVS 就提供了 RTC 功能，本章我们就学习如何使用 I.MX6U 内部的 RTC 来完成实时时钟功能。
+
+### 25.1 I.MX6U RTC 简介
+
+如果学习过 STM32 的话应该知道，STM32 内部有一个 RTC 外设模块，这个模块需要一个32.768KHz 的晶振，对这个 RTC 模块进行初始化就可以得到一个实时时钟。
+I.MX6U 内部也有个 RTC 模块，但是不叫作“RTC”，而是叫做“SNVS”，这一点要注意！
+本章我们参考《I.MX6UL参考手册》，而不是《I.MX6ULL 参考手册》，因为《I.MX6ULL 参考手册》很多 SNVS 相关的寄存器并没有给出来，不知道是为何？
+但是《I.MX6UL 参考手册》里面是完整的。
+所以本章我们使用《I.MX6UL 参考手册》，如果直接在《I.MX6UL 参考手册》的书签里面找“RTC”相关的字眼是找不到的。
+I.MX6U 系列的 RTC 是在 SNVS 里面，也就是《I.MX6UL 参考手册》的第46 章“Chapter 46 Secure Non-Volatile Storage(SNVS)”。
+
+SNVS 直译过来就是安全的非易性存储，SNVS 里面主要是一些低功耗的外设，包括一个安全的实时计数器(RTC)、一个单调计数器(monotonic counter)和一些通用的寄存器，本章我们肯定只使用实时计数器(RTC)。
+SNVS 里面的外设在芯片掉电以后由电池供电继续运行，I.MX6UALPHA 开发板上有一个纽扣电池，这个纽扣电池就是在主电源关闭以后为 SNVS 供电的，如图：
+
+![alt](./images/Snipaste_2024-12-01_19-38-59.png)
+
+因为纽扣电池在掉电以后会继续给 SNVS 供电，因此实时计数器就会一直运行，这样的话时间信息就不会丢失，除非纽扣电池没电了。
+在有纽扣电池作为后备电源的情况下，不管系统主电源是否断电，SNVS 都正常运行。
+
+SNVS 有两部分：SNVS_HP 和 SNVS_LP，系统主电源断电以后 SNVS_HP 也会断电，但是在后备电源支持下，SNVS_LP 是不会断电的，而且 SNVS_LP是和芯片复位隔离开的，因此 SNVS_LP 相关的寄存器的值会一直保存着。
+
+SNVS 分为两个子模块：SNVS_HP 和 SNVS_LP，也就是高功耗域(SNVS_HP)和低功耗域(SNVS_LP)，这两个域的电源来源如下：
+**SNVS_LP**：专用的 always-powered-on 电源域，系统主电源和备用电源都可以为其供电。
+**SNVS_HP**：系统(芯片)电源。
+
+子模块电源如图：
+
+![alt](.//images/Snipaste_2024-12-01_19-45-48.png)
+
+各个部分功能如下：
+
+①、VDD_HIGH_IN 是系统(芯片)主电源，这个电源会同时供给给 SNVS_HP 和 SNVS_LP。
+②、VDD_SNVS_IN 是纽扣电池供电的电源，这个电源只会供给给 SNVS_LP，保证在系统主电源 VDD_HIGH_IN 掉电以后 SNVS_LP 会继续运行。
+③、SNVS_HP 部分。
+④、SNVS_LP 部分，此部分有个 SRTC，这个就是我们本章要使用的 RTC。
+
+其实不管是 SNVS_HP 还是 SNVS_LP，其内部都有一个 SRTC，但是因为 SNVS_HP 在系统电源掉电以后就会关闭，所以我们本章使用的是 SNVS_LP 内部的 SRTC。
+毕竟我们肯定都不想开发板或者设备每次关闭以后时钟都被清零，然后开机以后先设置时钟。
+
+其实不管是 SNVS_HP 里面的 RTC，还是 SNVS_LP 里面的 SRTC，其本质就是一个定时器，和我们在第八章讲的 EPIT 定时器一样，只要给它提供时钟，它就会一直运行。
+SRTC 需要外界提供一个 32.768KHz 的时钟，I.MX6U-ALPHA 核心板上的 32.768KHz 的晶振就是提供这个时钟的。
+
+寄存器 SNVS_LPSRTCMR 和 SNVS_LPSRTCLR 保存着秒数，直接读取这两个寄存器的值就知道过了多长时间了。
+一般以 1970 年 1 月 1 日为起点，加上经过的秒数即可得到现在的时间和日期，原理还是很简单的。
+SRTC 也是带有闹钟功能的，可以在寄存器 SNVS_LPAR 中写入闹钟时间值，当时钟值和闹钟值匹配的时候就会产生闹钟中断，要使用时钟功能的话还需要进行一些设置，本章我们就不使用闹钟了。<span style="color:red">可以试试</span>
+
+接下来我们看一下本章要用到的与 SRTC 相关的部分寄存器，首先是 **SNVS_HPCOMR** 寄存器，这个寄存器我们只用到了位：NPSWA_EN(bit31)，这个位是非特权软件访问控制位，如果非特权软件要访问 SNVS 的话此位必须为 1。
+
+接下来看一下寄存器**SNVS_LPCR**寄存器，此寄存器也只用到了一个位：SRTC_ENV(bit0)，此位为 1 的话就使能 STC 计数器。
+
+最后来看一下寄存器 SNVS_SRTCMR 和 SNVS_SRTCLR，这两个寄存器保存着 RTC 的秒数，按照NXP官方的《6UL参考手册》中的说法，SNVS_SRTCMR保存着高15位，SNVS_SRTCLR保存着低 32 位，因此 SRTC 的计数器一共是 47 位。
+<span style="color:red">
+但是！我在编写驱动的时候发现按照手册上说的去读取计数器值是错误的！
+具体表现就是时间是混乱的，因此我在查找了 NXP 提供的 SDK 包中的 fsl_snvs_hp.c 以及 Linux 内核中的 rtcsnvs.c 这两个驱动文件以后发现《6UL 参考手册》上对 SNVS_SRTCMR 和 SNVS_SRTCLR 的解释是错误的。
+经过查阅这两个文件，得到如下结论：
+①、SRTC 计数器是 32 位的，不是 47 位！
+②、SNVS_SRTCMR 的 bit14:0 这 15 位是 SRTC 计数器的高 15 位。
+③、SNVS_SRTCLR 的 bit31:bit15 这 17 位是 SRTC 计数器的低 17 位。
+</span>
+
+按照上面的解释去读取这两个寄存器就可以得到正确的时间。
+如果要调整时间的话也是向这两个寄存器写入要设置的时间值对应的秒数就可以了，但是要修改这两个寄存器的话要**先关闭 SRTC。**
+
+关于 SNVS 中和 RTC 有关的寄存器就介绍到这里，关于这些寄存器详细的描述，请参考《I.MX6UL 参考手册》第 2931 页的 46.7 小节。
+本章我们使用 I.MX6U 的 SNVS_LP 的 SRTC，配置步骤如下：
+
+1. **初始化SNVS_SRTC**
+
+初始化 SNVS_LP 中的 SRTC。
+
+2. **设置RTC时间**
+
+第一次使用 RTC 肯定要先设置时间。
+
+3、**使能 RTC**
+
+配置好 RTC 并设置好初始时间以后就可以开启 RTC 了。
+
+### 25.2 硬件原理分析
+
+本试验用到的资源如下：
+
+①、指示灯 LED0。
+②、RGB LCD 接口。
+③、SRTC。
+
+SRTC 需要外接一个 32.768KHz 的晶振，在 I.MX6U-ALPHA 核心板上就有这个 32.768KHz的晶振，原理图如图：
+
+![alt](./images/Snipaste_2024-12-01_19-58-21.png)
+
+### 25.3 实验程序编写
+
+开发板光盘-> 1、裸机例程-> 16_rtc。
+
+#### 25.3.1 修改MCIMX6Y2.h
+
+在第十三章移植的 NXP 官方 SDK 包是针对 I.MX6ULL 编写的，因此文件 MCIMX6Y2.h中的结构体 SNVS_Type 里面的寄存器是不全的，我们需要在其中加入本章实验所需要的寄存器，修改 SNVS_Type 为如下所示：
+
+```C
+1 typedef struct {
+2 __IO uint32_t HPLR;
+3 __IO uint32_t HPCOMR;
+4 __IO uint32_t HPCR;
+5 __IO uint32_t HPSICR;
+6 __IO uint32_t HPSVCR;
+7 __IO uint32_t HPSR;
+8 __IO uint32_t HPSVSR;
+9 __IO uint32_t HPHACIVR;
+10 __IO uint32_t HPHACR;
+11 __IO uint32_t HPRTCMR;
+12 __IO uint32_t HPRTCLR;
+13 __IO uint32_t HPTAMR;
+14 __IO uint32_t HPTALR;
+15 __IO uint32_t LPLR;
+16 __IO uint32_t LPCR;
+17 __IO uint32_t LPMKCR;
+18 __IO uint32_t LPSVCR;
+19 __IO uint32_t LPTGFCR;
+20 __IO uint32_t LPTDCR;
+21 __IO uint32_t LPSR;
+22 __IO uint32_t LPSRTCMR;
+23 __IO uint32_t LPSRTCLR;
+24 __IO uint32_t LPTAR;
+25 __IO uint32_t LPSMCMR;
+26 __IO uint32_t LPSMCLR;
+27 }SNVS_Type;
+```
+
+如图：
+![alt](./images/Snipaste_2024-12-01_20-04-20.png)
+
+#### 25.3.2 编写实验程序
+
+本章实验在上一章例程的基础上完成，更改工程名字为“rtc”，然后在 bsp 文件夹下创建名为“rtc”的文件夹.
+然后在 bsp/rtc 中新建 bsp_rtc.c 和 bsp_rtc.h 这两个文件。
+```C
+1 #ifndef _BSP_RTC_H
+2 #define _BSP_RTC_H
+3 /***************************************************************
+4 Copyright © zuozhongkai Co., Ltd. 1998-2019. All rights reserved
+5 文件名 : bsp_rtc.h
+6 作者 : 左忠凯
+7 版本 : V1.0
+8 描述 : RTC 驱动头文件。
+9 其他 : 无
+10 论坛 : www.openedv.com
+11 日志 : 初版 V1.0 2019/1/3 左忠凯创建
+12 ***************************************************************/
+13 #include "imx6ul.h"
+14
+15 /* 相关宏定义 */
+16 #define SECONDS_IN_A_DAY (86400) /* 一天 86400 秒 */
+17 #define SECONDS_IN_A_HOUR (3600) /* 一个小时 3600 秒 */
+18 #define SECONDS_IN_A_MINUTE (60) /* 一分钟 60 秒 */
+19 #define DAYS_IN_A_YEAR (365) /* 一年 365 天 */
+20 #define YEAR_RANGE_START (1970) /* 开始年份 1970 年 */
+21 #define YEAR_RANGE_END (2099) /* 结束年份 2099 年 */
+22
+23 /* 时间日期结构体 */
+24 struct rtc_datetime
+25 {
+26 unsigned short year; /* 范围为:1970 ~ 2099 */
+27 unsigned char month; /* 范围为:1 ~ 12 */
+28 unsigned char day; /* 范围为:1 ~ 31 (不同的月，天数不同).*/
+29 unsigned char hour; /* 范围为:0 ~ 23 */
+30 unsigned char minute; /* 范围为:0 ~ 59 */
+31 unsigned char second; /* 范围为:0 ~ 59 */
+32 };
+33
+34 /* 函数声明 */
+35 void rtc_init(void);
+36 void rtc_enable(void);
+37 void rtc_disable(void);
+38 unsigned int rtc_coverdate_to_seconds(struct rtc_datetime *datetime);
+39 unsigned int rtc_getseconds(void);
+40 void rtc_setdatetime(struct rtc_datetime *datetime);
+41 void rtc_getdatetime(struct rtc_datetime *datetime);
+42
+43 #endif
+```
+第 16 到 21 行定义了一些宏，比如一天多少秒、一小时多少秒等等，这些宏将用于将秒转换为时间，或者将时间转换为秒。
+第 24 行定义了一个结构体 rtc_datetime，此结构体用于描述日期和时间参数。剩下的就是一些函数声明了，很简单。
+
+在文件 bsp_rtc.c 中输入如下内容：
+```C
+1 #include "bsp_rtc.h"
+2 #include "stdio.h"
+3
+4   /*
+5    * @description :初始化 RTC
+6    */
+7   void rtc_init(void)
+8   {
+9   /*
+10   * 设置 HPCOMR 寄存器
+11   * bit[31] 1 : 允许访问 SNVS 寄存器，一定要置 1
+12   */
+13      SNVS->HPCOMR |= (1 << 31);
+14
+15  #if 0
+16      struct rtc_datetime rtcdate;
+17
+18      rtcdate.year = 2018U;
+19      rtcdate.month = 12U;
+20      rtcdate.day = 13U;
+21      rtcdate.hour = 14U;
+22      rtcdate.minute = 52;
+23      rtcdate.second = 0;
+24      rtc_setDatetime(&rtcdate); /* 初始化时间和日期 */
+25  #endif
+26      rtc_enable(); /* 使能 RTC */
+27  }
+28
+29 /*
+30  * @description : 开启 RTC
+31  */
+32 void rtc_enable(void)
+33 {
+34 /*
+35  * LPCR 寄存器 bit0 置 1，使能 RTC
+36  */
+37  SNVS->LPCR |= 1 << 0;
+38  while(!(SNVS->LPCR & 0X01)); /* 等待使能完成 */
+39
+40  }
+41 
+42 /*
+43  * @description : 关闭 RTC
+44  */
+45  void rtc_disable(void)
+46  {
+47  /*
+48   * LPCR 寄存器 bit0 置 0，关闭 RTC
+49   */
+50   SNVS->LPCR &= ~(1 << 0);
+51   while(SNVS->LPCR & 0X01); /* 等待关闭完成*/
+52  }
+53
+54 /*
+55  * @description : 判断指定年份是否为闰年，闰年条件如下:
+56  * @param – year : 要判断的年份
+57  * @return : 1 是闰年，0 不是闰年
+58  */
+59 unsigned char rtc_isleapyear(unsigned short year)
+60 {
+61  unsigned char value=0;
+62
+63  if(year % 400 == 0) //四百年再闰
+64  value = 1;
+65  else
+66  {
+67      if((year % 4 == 0) && (year % 100 != 0)) //四年一闰 百年不闰
+68          value = 1;
+69      else
+70          value = 0;
+71  }
+72  return value;
+73 }
+74 
+75 /*
+76  * @description : 将时间转换为秒数
+77  * @param – datetime : 要转换日期和时间。
+78  * @return : 转换后的秒数
+79  */
+80 unsigned int rtc_coverdate_to_seconds(struct rtc_datetime *datetime)
+81 {
+82  unsigned short i = 0;
+83  unsigned int seconds = 0;
+84  unsigned int days = 0;
+85  unsigned short monthdays[] = {0U, 0U, 31U, 59U, 90U, 120U, 151U,181U, 212U, 243U, 273U, 304U, 334U};
+86
+87  for(i = 1970; i < datetime->year; i++)
+88  {
+89      days += DAYS_IN_A_YEAR; /* 平年，每年 365 天 */
+90      if(rtc_isleapyear(i)) days += 1; /* 闰年多加一天 */
+91  }
+92
+93  days += monthdays[datetime->month];
+94  if(rtc_isleapyear(i) && (datetime->month >= 3)) days += 1;
+95
+96  days += datetime->day - 1;
+97
+98  seconds = days * SECONDS_IN_A_DAY +
+99  datetime->hour * SECONDS_IN_A_HOUR +
+100 datetime->minute * SECONDS_IN_A_MINUTE +
+101 datetime->second;
+102
+103 return seconds;
+104 }
+105
+106 /*
+107  * @description : 设置时间和日期
+108  * @param – datetime : 要设置的日期和时间
+109  * @return : 无
+110  */
+111 void rtc_setdatetime(struct rtc_datetime *datetime)
+112 {
+113
+114     unsigned int seconds = 0;
+115     unsigned int tmp = SNVS->LPCR;
+116 
+117     rtc_disable(); /* 设置寄存器 HPRTCMR 和 HPRTCLR 前要先关闭 RTC */
+118     /* 先将时间转换为秒 */
+119     seconds = rtc_coverdate_to_seconds(datetime);
+120     SNVS->LPSRTCMR = (unsigned int)(seconds >> 17); /* 设置高 17 位 */
+121     SNVS->LPSRTCLR = (unsigned int)(seconds << 15); /* 设置低 15 位 */
+122
+123     /* 如果此前 RTC 是打开的在设置完 RTC 时间以后需要重新打开 RTC */
+124     if (tmp & 0x1)
+125     rtc_enable();
+126 }
+127
+128 /*
+129  * @description : 将秒数转换为时间
+130  * @param - seconds : 要转换的秒数
+131  * @param – datetime : 转换后的日期和时间
+132  * @return : 无
+133  */
+134 void rtc_convertseconds_to_datetime(unsigned int seconds,struct rtc_datetime *datetime)
+135 {
+136     unsigned int x;
+137     unsigned int secondsRemaining, days;
+138     unsigned short daysInYear;
+139
+140     /* 每个月的天数 */
+141     unsigned char daysPerMonth[] = {0U, 31U, 28U, 31U, 30U, 31U,30U, 31U, 31U, 30U, 31U, 30U, 31U};
+142
+143     secondsRemaining = seconds; /* 剩余秒数初始化 */
+144     days = secondsRemaining / SECONDS_IN_A_DAY + 1;
+145     secondsRemaining = secondsRemaining % SECONDS_IN_A_DAY;
+146
+147     /* 计算时、分、秒 */
+148     datetime->hour = secondsRemaining / SECONDS_IN_A_HOUR;
+149     secondsRemaining = secondsRemaining % SECONDS_IN_A_HOUR;
+150     datetime->minute = secondsRemaining / 60;
+151     datetime->second = secondsRemaining % SECONDS_IN_A_MINUTE;
+152
+153     /* 计算年 */
+154     daysInYear = DAYS_IN_A_YEAR;
+155     datetime->year = YEAR_RANGE_START;
+156     while(days > daysInYear)
+157     {
+158     /* 根据天数计算年 */
+159         days -= daysInYear;
+160         datetime->year++;
+161
+162     /* 处理闰年 */
+163         if (!rtc_isleapyear(datetime->year))
+164             daysInYear = DAYS_IN_A_YEAR;
+165         else /*闰年，天数加一 */
+166             daysInYear = DAYS_IN_A_YEAR + 1;
+167     }
+168     /*根据剩余的天数计算月份 */
+169     if(rtc_isleapyear(datetime->year)) /* 如果是闰年的话 2 月加一天 */
+170         daysPerMonth[2] = 29;
+171     for(x = 1; x <= 12; x++)
+172     {
+173         if (days <= daysPerMonth[x])
+174         {
+175             datetime->month = x;
+176             break;
+177         }
+178     else
+179         {
+180             days -= daysPerMonth[x];
+181         }
+182     }
+183         datetime->day = days;
+184 }
+185
+186 /*
+187  * @description : 获取 RTC 当前秒数
+188  * @param : 无
+189  * @return : 当前秒数
+190  */
+191 unsigned int rtc_getseconds(void)
+192 {
+193     unsigned int seconds = 0;
+194
+195     seconds = (SNVS->LPSRTCMR << 17) | (SNVS->LPSRTCLR >> 15);
+196     return seconds;
+197 }
+198
+199 /*
+200  * @description : 获取当前时间
+201  * @param – datetime : 获取到的时间，日期等参数
+202  * @return : 无
+203  */
+204 void rtc_getdatetime(struct rtc_datetime *datetime)
+205 {
+206     unsigned int seconds = 0;
+207     seconds = rtc_getseconds();
+208     rtc_convertseconds_to_datetime(seconds, datetime);
+209 }
+```
+文件 bsp_rtc.c 里面一共有 9 个函数，依次来看一下这些函数的意义。
+
+函数 rtc_init 明显是初始化rtc的，主要是使能RTC，也可以在rtc_init函数里面设置时间。
+函数 rtc_enable和rtc_disable分别是 RTC 的使能和禁止函数。
+函数 rtc_isleapyear 用于判断某一年是否为闰年。
+函数 rtc_coverdate_to_seconds 负责将给定的日期和时间信息转换为对应的秒数。
+函数 rtc_setdatetime用于设置时间，也就是设置寄存器 SNVS_LPSRTCMR 和 SNVS_LPSRTCLR 。 
+函数 rtc_convertseconds_to_datetime 用于将给定的秒数转换为对应的时间值。
+函数 rtc_getseconds 获取 SRTC 当前秒数，其实就是读取寄存器 SNVS_LPSRTCMR 和 SNVS_LPSRTCLR，然后将其结合成 32 位的值。
+最后一个函数 rtc_getdatetime 是获取时间值。
+
+我们在 main 函数里面先初始化 RTC，然后进入 3S 倒计时， 如果这 3S 内按下了 KEY0 按键，那么就设置 SRTC 的日期。
+如果 3S 倒计时结束以后没有按下 KEY0，也就是没有设置 SRTC时间的话就进入 while 循环，然后读取 RTC 的时间值并且显示在 LCD 上，在文件 main.c 中输
+入如下所示内容：
+
+```C
+1  #include "bsp_clk.h"
+2  #include "bsp_delay.h"
+3  #include "bsp_led.h"
+4  #include "bsp_beep.h"
+5  #include "bsp_key.h"
+6  #include "bsp_int.h"
+7  #include "bsp_uart.h"
+8  #include "bsp_lcd.h"
+9  #include "bsp_lcdapi.h"
+10 #include "bsp_rtc.h"
+11 #include "stdio.h"
+12
+13 /*
+14  * @description : main 函数
+15  * @param : 无
+16  * @return : 无
+17  */
+18 int main(void)
+19 {
+20  unsigned char key = 0;
+21  int t = 0;
+22  int i = 3; /* 倒计时 3S */
+23  char buf[160];
+24  struct rtc_datetime rtcdate;
+25  unsigned char state = OFF;
+26
+27  int_init(); /* 初始化中断(一定要最先调用！) */
+28  imx6u_clkinit(); /* 初始化系统时钟 */
+29  delay_init(); /* 初始化延时 */
+30  clk_enable(); /* 使能所有的时钟 */
+31  led_init(); /* 初始化 led */
+32  beep_init(); /* 初始化 beep */
+33  uart_init(); /* 初始化串口，波特率 115200 */
+34  lcd_init(); /* 初始化 LCD */
+35  rtc_init(); /* 初始化 RTC */
+36
+37  tftlcd_dev.forecolor = LCD_RED;
+38  lcd_show_string(50, 10, 400, 24, 24, (char*)"ALPHA-IMX6UL RTC TEST");/* 显示字符串 */
+39 tftlcd_dev.forecolor = LCD_BLUE;
+40  memset(buf, 0, sizeof(buf));
+41
+42 while(1)
+43 {
+44  if(t==100) /* 1s 时间到了 */
+45  {
+46      t=0;
+47      printf("will be running %d s......\r", i);
+48
+49      lcd_fill(50, 40,370, 70, tftlcd_dev.backcolor); /* 清屏 */
+50      sprintf(buf, "will be running %ds......", i);
+51      lcd_show_string(50, 40, 300, 24, 24, buf);
+52      i--;
+53      if(i < 0)
+54      break;
+55  }
+56
+57  key = key_getvalue();
+58  if(key == KEY0_VALUE)
+59  {
+60      rtcdate.year = 2018;
+61      rtcdate.month = 1;
+62      rtcdate.day = 15;
+63      rtcdate.hour = 16;
+64      rtcdate.minute = 23;
+65      rtcdate.second = 0;
+66      rtc_setdatetime(&rtcdate); /* 初始化时间和日期 */
+67      printf("\r\n RTC Init finish\r\n");
+68      break;
+69  }
+70
+71  delayms(10);
+72  t++;
+73 }
+74 tftlcd_dev.forecolor = LCD_RED;
+75 lcd_fill(50, 40,370, 70, tftlcd_dev.backcolor); /* 清屏 */
+76 lcd_show_string(50, 40, 200, 24, 24, (char*)"Current Time:");
+77 tftlcd_dev.forecolor = LCD_BLUE;
+78
+79 while(1)
+80 {
+81  rtc_getdatetime(&rtcdate);
+82  sprintf(buf,"%d/%d/%d %d:%d:%d",rtcdate.year, rtcdate.month,rtcdate.day, rtcdate.hour, rtcdate.minute, rtcdate.second);
+83  lcd_fill(50,70, 300,94, tftlcd_dev.backcolor);
+84  lcd_show_string(50,70,250,24,24,(char*)buf); /* 显示字符串 */
+85
+86  state = !state;
+87  led_switch(LED0,state);
+88  delayms(1000); /* 延时一秒 */
+89 }
+90  return 0;
+91 }
+```
+
+### 25.4 编译下载
+ 
+修改 Makefile 中的 TARGET 为 rtc，然后在在 INCDIRS 和 SRCDIRS 中加入“bsp/rtc”
+
+lds保持不变
+
+下载到SD卡运行即可
+
+## 第二十六章 IIC通信
+
+
+
