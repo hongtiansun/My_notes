@@ -80,6 +80,7 @@ alientek_uboot文件夹创建成功以后使用 FileZilla 软件将正点原子�
 1. **512MB(DDR3)+8GB(EMMC)核心板**
 
 如果使用的是 512MB+8GB 的 EMMC 核心板，使用如下命令来编译对应的 uboot：
+
 ```sh
 make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- distclean
 make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- (加空格)
@@ -102,6 +103,7 @@ make V=1 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j12
 
 每次编译 uboot 都要输入一长串命令，为了简单起见，我们可以新建一个 shell 脚本文件，将这些命令写到 shell 脚本文件里面，然后每次只需要执行 shell 脚本即可完成编译工作。
 新建名为 mx6ull_alientek_emmc.sh 的 shell 脚本文件，然后在里面输入如下内容：
+
 ```sh
 1 #!/bin/bash
 2 make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- distclean
@@ -109,6 +111,7 @@ make V=1 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j12
                         mx6ull_14x14_ddr512_emmc_defconfi
 4 make V=1 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j12
 ```
+
 第 1 行是 shell 脚本要求的，必须是“#!/bin/bash”或者“#!/bin/sh”。
 
 第 2 行使用了 make 命令，用于清理工程，也就是每次在编译 uboot 之前都清理一下工程。
@@ -198,10 +201,12 @@ uboot 是来干活的，我们现在已经进入 uboot 的命令行模式了，�
 所以图中的命令是正点原子提供的 uboot 中使能的命令，uboot 支持的命令还有很多，而且也可以在 uboot 中自定义命令。
 这些命令后面都跟有命令说明，用于描述此命令的作用，但是命令具体怎么用呢？
 我们输入“help(或?) 命令名”既可以查看命令的详细用法，以“bootz”这个命令为例，我们输入如下命令即可查看“bootz”这个命令的用法：
+
 ```sh
 ? bootz
 help bootz
 ```
+
 ![alt](/images/Snipaste_2024-12-05_20-57-06.png)
 
 图中就详细的列出了“bootz”这个命令的详细，其它的命令也可以使用此方法查询
@@ -243,10 +248,12 @@ uboot 中的环境变量是可以修改的，有专门的命令来修改环境�
 所以使用命令 setenv 修改的是 DRAM中的环境变量值，修改以后要使用 saveenv 命令将修改后的环境变量保存到 flash 中，否则的话uboot 下一次重启会继续使用以前的环境变量值。
 
 比如我们要将环境变量 bootdelay 改为 5，就可以使用如下所示命令：
+
 ```sh
 setenv bootdelay 5
 saveenv
 ```
+
 ![alt](./images/Snipaste_2024-12-05_21-13-42.png)
 
 当我们使用命令 saveenv 保存修改后的环境变量的话会有保存过程提示信息，根据提示可以看出环境变量保存到了 MMC(0)中，也就是 SD 卡中。
@@ -257,20 +264,24 @@ saveenv
 ![alt](./images/Snipaste_2024-12-05_21-18-45.png)
 
 有时候我们修改的环境变量值可能会有空格，比如 bootcmd、bootargs 等，这个时候环境变量值就得用单引号括起来，比如下面修改环境变量 bootargs 的值：
+
 ```sh
 setenv bootargs 'console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw'
 saveenv
 ```
+
 上面命令设置 bootargs 的值为“console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw”。
 其中“console=ttymxc0,115200”、“root=/dev/mmcblk1p2”、“rootwait”和“rw”相当于四组“值”，这四组“值”之间用空格隔开，所以需要使用单引号‘’将其括起来，表示这四组“值”都属于环境变量 bootargs
 
 2. **新建环境变量**
 
 命令 setenv 也可以用于新建命令，用法和修改环境变量一样，比如我们新建一个环境变量author，author 的值为我的名字拼音：zuozhongkai，那么就可以使用如下命令：
+
 ```sh
 setenv author zuozhongkai
 saveenv
 ```
+
 新建命令 author 完成以后重启 uboot，然后使用命令 printenv 查看当前环境变量:
 
 ![alt](./images/Snipaste_2024-12-05_21-19-25.png)
@@ -278,10 +289,12 @@ saveenv
 3. **删除环境变量**
 
 既然可以新建环境变量，肯定也可以删除环境变量，删除环境变量也是使用命令 setenv，要删除一个环境变量只要给这个环境变量赋空值即可，比如我们删除掉上面新建的 author 这个环境变量，命令如下：
+
 ```sh
 setenv author 
 saveenv
 ```
+
 通过 setenv 给 author 赋空值，也就是什么都不写来删除环境变量 author。
 重启uboot 就会发现环境变量 author 没有了。
 
@@ -308,11 +321,13 @@ uboot 命令中的数字都是十六进制的！不是十进制的！
 
 uboot 命令里面的数字都是十六进制的，所以可以不用写“0x”前缀，十进制的 20 其十六进制为 0x14，所以命令 md 后面的个数应该是 14，如果写成 20 的话就表示查看32(十六进制为 0x20)个字节的数据。
 分析下面三个命令的区别：
+
 ```sh
 md.b 80000000 10
 md.w 80000000 10
 md.l 80000000 10
 ```
+
 上面这三个命令都是查看以 0X80000000 为起始地址的内存数据，第一个命令以.b 格式显
 示，长度为 0x10，也就是 16 个字节；第二个命令以.w 格式显示，长度为 0x10，也就是 16\*2=32个字节；最后一个命令以.l 格式显示，长度也是 0x10，也就是 16\*4=64 个字节。
 这三个命令的执行结果如图所示：
@@ -391,5 +406,627 @@ cmp 命令同样可以以.b、.w 和.l 来指定操作格式，addr1 为第一�
 
 可以看出，0x80002000 处的数据和 0x80003000 处的数据就不一样。
 
-#### 30.4.4 网络操作命令
+#### 30.4.4 网络操作命令(*)
+
+需要链接网线，暂时略过
+
+#### 30.4.5 EMMC与SD卡命令(*)
+
+uboot 支持 EMMC 和 SD 卡，因此也要提供 EMMC 和 SD 卡的操作命令。
+一般认为 EMMC和 SD 卡是同一个东西，所以没有特殊说明，本教程统一使用 MMC 来代指 EMMC 和 SD 卡。
+uboot 中常用于操作 MMC 设备的命令为“mmc”。
+
+mmc 是一系列的命令，其后可以跟不同的参数，输入“？mmc”即可查看 mmc 有关的命令，如图：
+
+![alt](./images/Snipaste_2024-12-06_16-50-38.png)
+
+从图可以看出，mmc 后面跟不同的参数可以实现不同的功能，如表所示：
+
+| 命令            | 描述                                          |
+| --------------- | --------------------------------------------- |
+| mmc info        | 输出 MMC 设备信息                             |
+| mmc read        | 读取 MMC 中的数据。                           |
+| mmc wirte       | 向 MMC 设备写入数据。                         |
+| mmc rescan      | 扫描 MMC 设备。                               |
+| mmc part        | 列出 MMC 设备的分区。                         |
+| mmc dev         | 切换 MMC 设备。                               |
+| mmc list        | 列出当前有效的所有 MMC 设备。                 |
+| mmc hwpartition | 设置 MMC 设备的分区。                         |
+| mmc bootbus……   | 设置指定 MMC 设备的 BOOT_BUS_WIDTH 域的值。   |
+| mmc bootpart……  | 设置指定 MMC 设备的 boot 和 RPMB 分区的大小。 |
+| mmc partconf……  | 设置指定 MMC 设备的 PARTITION_CONFG 域的值。  |
+| mmc rst         | 复位 MMC 设备                                 |
+| mmc setdsr      | 设置 DSR 寄存器的值。                         |
+
+1. **mmc info命令**
+
+mmc info 命令用于输出当前选中的 mmc info 设备的信息，输入命令“mmc info”即可，如图所示：
+
+![alt](./images/Snipaste_2024-12-06_16-58-12.png)
+
+参考图：
+![alt](./images/Snipaste_2024-12-06_17-00-04.png)
+
+从图可以看出，当前选中的 MMC设备是 EMMC，版本为 5.0，容量为 7.1GiB(EMMC
+为 8GB)，速度为 52000000Hz=52MHz，8 位宽的总线。
+还有一个与 mmc info 命令相同功能的命令：mmcinfo，“mmc”和“info”之间没有空格。
+实际量产的 EMMC 核心板所使用的 EMMC芯片是多厂商供应的，因此 EMMC 信息以实际为准，但是容量都为 8GB 的！
+
+mmc info 只能展示当前的mmc设备
+自行设置，当前设备为SD卡，故而为SD卡信息。
+
+2. **mmc rescan 命令**
+
+mmc rescan 命令用于扫描当前开发板上所有的 MMC 设备。
+包括 EMMC 和 SD 卡，输入“mmc rescan”即可
+
+3. **mmc list**
+
+mmc list 命令用于来查看当前开发板一共有几个 MMC 设备，输入“mmc list”，结果如图所示：
+
+![alt](./images/Snipaste_2024-12-06_17-04-18.png)
+
+可以看出当前开发板有两个 MMC 设备：FSL_SDHC:0 (SD)和 FSL_SDHC:1，这是因为我现在用的是 EMMC 版本的核心板，加上 SD 卡一共有两个 MMC 设备，FSL_SDHC:0 是 SD卡，FSL_SDHC:1(eMMC)是 EMMC。
+输入“mmc info”查询到的是当前设备信息。要想查看其他设备信息，就要使用命令“mmc dev”来将 EMMC设置为当前的 MMC 设备。
+
+4. **mmc dev 命令**
+
+mmc dev 命令用于切换当前 MMC 设备，命令格式如下：
+`mmc dev [dev] [part]`
+
+[dev]用来设置要切换的 MMC 设备号，[part]是分区号。
+如果不写分区号的话默认为分区 0。
+如图：
+![alt](./images/Snipaste_2024-12-06_17-08-47.png)
+通过这种方式可以轻松的实现mmc设备的切换
+
+5. **mmc part命令**
+
+有时候 SD 卡或者 EMMC 会有多个分区，可以使用命令“mmc part”来查看其分区，比如查看 EMMC 的分区情况，输入如下命令：
+
+```sh
+mmc dev 1 //切换到 EMMC
+mmc part //查看 EMMC 分区
+```
+
+![alt](./images/Snipaste_2024-12-06_17-13-40.png)
+
+可以看出，此时 EMMC 有两个分区，第一个分区起始扇区为 20480，长度为 262144 个扇区；第二个分区起始扇区为 282624，长度为 14594048 个扇区。
+如果 EMMC 里面烧写了 Linux 系统的话，EMMC 是有 3 个分区的，第 0 个分区存放 uboot，第 1 个分区存放Linux 镜像文件和设备树，第 2 个分区存放根文件系统。
+但是在图中只有两个分区，那是因为第 0 个分区没有格式化，所以识别不出来，实际上第 0 个分区是存在的。
+一个新的 SD卡默认只有一个分区，那就是分区 0，所以前面讲解的 uboot 烧写到 SD 卡，其实就是将 u-boot.bin烧写到了 SD 卡的分区 0 里面。
+
+后面学习 Linux 内核移植的时候再讲解怎么在 SD 卡中创建并格式化第二个分区，并将 Linux 镜像文件和设备树文件存放到第二个分区中。
+
+如果要将 EMMC 的分区 2 设置为当前 MMC 设备，可以使用如下命令：
+`mmc dev 1 2`
+如图：
+![alt](./images/Snipaste_2024-12-06_17-17-23.png)
+
+mmcinfo #0 显示容量为7.3GB
+![alt](./images/Snipaste_2024-12-06_17-25-05.png)
+
+65536\*15202304 \* 512 B /1024/1024/1024 ≈ 7.28GB
+
+6. **mmc read命令**
+
+mmc read 命令用于读取 mmc 设备的数据，命令格式如下：
+`mmc read addr blk# cnt`
+
+addr 是数据读取到 DRAM 中的地址，blk 是要读取的块起始地址(十六进制)，一个块是 512字节，这里的块和扇区是一个意思，在 MMC 设备中我们通常说扇区，cnt 是要读取的块数量(十六进制)。
+比如从 EMMC 的第 1536(0x600)个块开始，读取 16(0x10)个块的数据到 DRAM 的0X80800000 地址处，命令如下：
+
+```sh
+mmc dev 1 0 //切换到 MMC 分区 0
+mmc read 80800000 600 10 //读取数据
+```
+
+这里我们还看不出来读取是否正确，通过 md.b 命令查看 0x80800000 处的数据就行了，查看 16\*512=8192(0x2000)个字节的数据，命令如下：
+`md.b 80800000 2000`
+
+![alt](./images/Snipaste_2024-12-06_17-30-15.png)
+
+可以看到“baudrate=115200.board_name=EVK.board_rev=14X14.”等字样，这个就是 uboot 中的环境变量。
+EMMC 核心板 uboot 环境变量的存储起始地址就是1536*512=786432。
+
+7. **mmc write命令**
+
+要将数据写到 MMC 设备里面，可以使用命令“mmc write”，格式如下：
+`mmc write addr blk# cnt`
+
+addr 是要写入 MMC 中的数据在 DRAM 中的起始地址，blk 是要写入 MMC 的块起始地址(十六进制)，cnt 是要写入的块大小，一个块为 512 字节。
+我们可以使用命令“mmc write”来升级 uboot，也就是在 uboot 中更新 uboot。
+
+这里要用到 nfs 或者 tftp 命令，通过 nfs 或者 tftp 命令将新的 u-boot.bin 下载到开发板的 DRAM 中，然后再使用命令“mmc write”将其写入到 MMC设备中。
+我们就来更新一下 SD 中的 uboot，先查看一下 SD 卡中的 uboot 版本号，注意编译时间，输入命令：
+
+```sh
+mmc dev 0 //切换SD卡
+version //1版本号
+```
+
+![alt](./images/Snipaste_2024-12-06_17-46-26.png)
+
+可以看出当前 SD 卡中的 uboot 的编译时间。
+
+我们现在重新编译一下 uboot，然后将编译出来的 u-boot.imx(u-boot.bin 前面加了一些头文件)拷贝到 Ubuntu 中的tftpboot 目录下。
+最后使用 tftp 命令将其下载到 0x80800000 地址处，命令如下：
+`tftp 80800000 u-boot.imx`
+
+如图：
+![alt]("略")
+
+u-boot.imx 大小为 379904 字节，379904/512=742，所以我们要向 SD 卡中写入742 个块，如果有小数的话就要加 1 个块。
+
+使用命令“mmc write”从 SD 卡分区 0 第 2 个块(扇区)开始烧写，一共烧写 742(0x2E6)个块，命令如下：
+
+```sh
+mmc dev 0 0
+mmc write 80800000 2 32E
+```
+
+烧写过程如图：
+![alt]("略")
+
+烧写成功，重启开发板(从 SD 卡启动)，重启以后再输入 version 来查看版本号，结果如图：
+![alt](略)
+
+可以看出，此时的 uboot 的编译时间，说明 uboot更新成功。
+这里我们就学会了如何在 uboot 中更新 uboot 了，如果要更新 EMMC 中的 uboot 也是一样的。
+同理，如果要在 uboot 中更新 EMMC 对应的 uboot，可以使用如下所示命令：
+
+```sh
+mmc dev 1 0 //切换到 EMMC 分区 0
+tftp 80800000 u-boot.imx //下载 u-boot.imx 到 DRAM
+mmc write 80800000 2 32E //烧写 u-boot.imx 到 EMMC 中
+mmc partconf 1 1 0 0 //分区配置，EMMC 需要这一步！
+```
+
+<span style="color:red"><b>千万不要写 SD 卡或者 EMMC 的前两个块(扇区)，里面保存着分区表！</b></span>
+
+由于没有网线，本小节验证代码后续补充！
+
+8. **mmc erase命令**  
+
+如果要擦除 MMC 设备的指定块就是用命令“mmc erase”，命令格式如下：
+`mmc erase blk# cnt`
+
+blk 为要擦除的起始块，cnt 是要擦除的数量。没事不要用 mmc erase 来擦除 MMC 设备！！！
+
+关于 MMC 设备相关的命令就讲解到这里，表中还有一些跟 MMC 设备操作有关的命令，但是很少用到，这里就不讲解了，感兴趣的可以上网查一下，或者在 uboot 中查看这些命令的使用方法。
+
+#### 30.4.6 FAT格式文件系统操作命令(*)
+
+有时候需要在 uboot 中对 SD 卡或者 EMMC 中存储的文件进行操作，这时候就要用到文件操作命令，跟文件操作相关的命令有：fatinfo、fatls、fstype、fatload 和 fatwrite，但是这些文件操作命令只支持 FAT 格式的文件系统！！
+
+1. **fatinfo命令**
+
+fatinfo 命令用于查询指定 MMC 设备分区的文件系统信息，格式如下：
+
+`fatinfo <interface> [<dev[:part]>]`
+
+interface 表示接口，比如 mmc，dev 是查询的设备号，part 是要查询的分区。
+比如我们要查询 EMMC 分区 1 的文件系统信息，命令如下：
+`fatinfo mmc 1:1`
+
+![alt](./images/Snipaste_2024-12-06_19-02-23.png)
+
+从上图可以看出，EMMC 分区 1 的文件系统为 FAT32 格式的。
+
+2. **fatls命令**
+
+fatls 命令用于查询 FAT 格式设备的目录和文件信息，命令格式如下：
+`fatls <interface> [<dev[:part]>] [directory]`
+
+interface 是要查询的接口，比如 mmc，dev 是要查询的设备号，part 是要查询的分区，directory是要查询的目录。
+比如查询 EMMC 分区 1 中的所有的目录和文件，输入命令：
+`fatls mmc 1:1`
+
+![alt](./images/Snipaste_2024-12-06_19-05-39.png)
+
+从上图可以看出，emmc 的分区 1 中存放着 8 个文件。
+
+3. **fstype命令**
+
+fstype 用于查看 MMC 设备某个分区的文件系统格式，命令格式如下：
+`fstype <interface> <dev>:<part>`
+
+正点原子 EMMC 核心板上的 EMMC 默认有 3 个分区，我们来查看一下这三个分区的文件系统格式，输入命令：
+
+```sh
+fstype mmc 1:0
+fstype mmc 1:1
+fstype mmc 1:2
+```
+
+![alt](./images/Snipaste_2024-12-06_19-08-21.png)
+
+从上图可以看出，分区 0 格式未知，因为分区 0 存放的 uboot，并且分区 0 没有格式化，所以文件系统格式未知。
+分区 1 的格式为 fat，分区 1 用于存放 linux 镜像和设备树。
+分区 2 的格式为 ext4，用于存放 Linux 的根文件系统(rootfs)。
+
+4. **fatload命令**
+
+fatload 命令用于将指定的文件读取到 DRAM 中，命令格式如下：
+`fatload <interface> [<dev[:part]> [<addr> [<filename> [bytes [pos]]]]]`
+
+interface 为接口，比如 mmc，dev 是设备号，part 是分区，addr 是保存在 DRAM 中的起始地址，filename 是要读取的文件名字。bytes 表示读取多少字节的数据，如果 bytes 为 0 或者省略的话表示读取整个文件。pos 是要读的文件相对于文件首地址的偏移，如果为 0 或者省略的话表示从文件首地址开始读取。
+我们将 EMMC 分区 1 中的 zImage 文件读取到 DRAM 中的0X80800000 地址处，命令如下：
+`fatload mmc 1:1 80800000 zImage`
+
+从SD卡读取
+![alt](./images/Snipaste_2024-12-06_19-12-40.png)
+从EMMC读取
+![alt](./images/Snipaste_2024-12-06_19-14-01.png)
+
+5. **fatwrite命令**
+
+注意！uboot 默认没有使能 fatwrite 命令，需要修改板子配置头文件，比如 mx6ullevk.h、mx6ull_alientek_emmc.h 等等，板子不同，其配置头文件也不同。
+找到自己开发板对应的配置头文件然后添加如下一行宏定义来使能 fatwrite 命令：
+`#define CONFIG_FAT_WRITE /* 使能 fatwrite 命令 */`
+
+fatwirte 命令用于将 DRAM 中的数据写入到 MMC 设备中，命令格式如下：
+`fatwrite <interface> <dev[:part]> <addr> <filename> <bytes>`
+
+interface 为接口，比如 mmc，dev 是设备号，part 是分区，addr 是要写入的数据在 DRAM中的起始地址，filename 是写入的数据文件名字，bytes 表示要写入多少字节的数据。
+我们可以通过 fatwrite 命令在 uboot 中更新 linux 镜像文件和设备树。
+
+我们以更新 linux 镜像文件 zImage为例，首先将正点原子 I.MX6U-ALPHA 开发板提供的 zImage 镜像文件拷贝到 Ubuntu 中的tftpboot 目录下，zImage 镜像文件放到了开发板光盘中。
+路径为：开发板光盘->8、系统镜像->1、出厂系统镜像->2、kernel 镜像->linux-imx-4.1.15-2.1.0-gbfed875-v1.6->zImage。
+
+拷贝完成以后使用命令 tftp 将 zImage 下载到 DRAM 的 0X80800000 地址处，命令如下：
+`tftp 80800000 zImage`
+
+下载过程如图：
+![alt](./images/Snipaste_2024-12-06_19-17-27.png)
+
+zImage 大小为 6785272(0X6788f8)个字节(注意，由于开发板系统在不断的更新中，因此zImage 大小不是固定的，一切以实际大小为准)，接下来使用命令 fatwrite 将其写入到 EMMC 的分区 1 中，文件名字为 zImage，命令如下：
+`fatwrite mmc 1:1 80800000 zImage 6788f8`
+
+结果如图：
+![alt](./images/Snipaste_2024-12-06_19-18-26.png)
+
+完成以后使用“fatls”命令查看一下 EMMC 分区 1 里面的文件，结果如图:
+![alt](./images/Snipaste_2024-12-06_19-18-53.png)
+
+#### 30.4.7 EXT格式文件系统操作命令
+
+uboot 有 ext2 和 ext4 这两种格式的文件系统的操作命令，常用的就四个命令，分别为：ext2load、ext2ls、ext4load、ext4ls 和 ext4write。
+这些命令的含义和使用与 fatload、fatls 和 fatwrite一样，只是 ext2 和 ext4 都是针对 ext 文件系统的。
+
+比如 ext4ls 命令，EMMC 的分区 2 就是 ext4格式的，使用 ext4ls 就可以查询 EMMC 的分区 2 中的文件和目录，输入命令：
+`ext4ls mmc 1:2`
+
+![alt](./images/Snipaste_2024-12-06_19-21-12.png)
+
+关于 ext 格式文件系统其他命令的操作参考 30.4.6 小节的即可，这里就不讲解了。
+
+#### 30.4.8 NAND操作命令(本人使用EMMC故而概述)
+
+uboot 是支持 NAND Flash 的，所以也有 NAND Flash 的操作命令，前提是使用的 NAND 版本的核心板，并且编译 NAND 核心板对应的 uboot，然后使用 imxdownload 软件将 u-boot.bin 烧写到 SD 卡中，最后通过 SD 卡启动。
+一般情况下 NAND 版本的核心板已经烧写好了 uboot、linux kernel 和 rootfs 这些文件，所以可以将 BOOT 拨到 NAND，然后直接从 NAND Flash 启动即可。
+
+启动信息如图：
+![alt](./images/Snipaste_2024-12-06_19-22-46.png)
+
+从图可以看出，当前开发板的 NAND 容量为 512MiB。输入“? nand”即可查看NAND 相关命令，如图所示：
+
+![alt](./images/Snipaste_2024-12-06_19-23-29.png)
+
+1. **nand info**
+
+![alt](./images/Snipaste_2024-12-06_19-24-43.png)
+打印NAND FLASH信息
+给出了 NAND 的页大小、OOB 域大小，擦除大小等信息。可以对照着所使用的 NAND Flash 数据手册来查看一下这些信息是否正确。
+
+2. **nand device 命令**
+
+nand device 用于切换 NAND Flash，如果你的板子支持多片 NAND 的话就可以使用此命令来设置当前所使用的 NAND。
+这个需要你的 CPU 有两个 NAND 控制器，并且两个 NAND 控制器各接一片 NAND Flash。
+就跟 I.MX6U 有两个 SDIO 接口，这两个 SDIO 接口可以接两个 MMC设备一样。不过一般情况下 CPU 只有一个 NAND 接口，而且在使用中只接一片 NAND。
+
+3. **nand erase命令**
+
+nand erase 命令用于擦除 NAND Flash，NAND Flash 的特性决定了在向 NAND Flash 写数据之前一定要先对要写入的区域进行擦除。“nand erase”命令有三种形式：
+
+```sh
+nand erase[.spread] [clean] off size //从指定地址开始(off)开始，擦除指定大小(size)的区域。
+nand erase.part [clean] partition //擦除指定的分区
+nand erase.chip [clean] //全篇擦除
+```
+
+NAND 的擦除命令一般是配合写命令的，后面讲解 NAND 写命令的时候在演示如何使用“nand erase”。
+
+4. **nand write**
+
+此命令用于向 NAND 指定地址写入指定的数据，一般和“nand erase”命令配置使用来更新NAND 中的 uboot、linux kernel 或设备树等文件，命令格式如下：
+
+`nand write addr off size`
+
+addr 是要写入的数据首地址，off 是 NAND 中的目的地址，size 是要写入的数据大小。
+由于 I.MX6ULL 要求 NAND 对应的 uboot 可执行文件还需要另外包含 BCB 和 DBBT，因此直接编译出来的 uboot.imx 不能直接烧写到 NAND 里面。
+关于 BCB 和 DBBT 的详细介绍请参考《I.MX6ULL 参考手册》的 8.5.2.2 小节，笔者目前没有详细去研究 BCB 和 DBBT，因此我们不能在 NAND 版的 uboot 里面更新 uboot 自身。
+除非大家去研究一下 I.MX6ULL 的 BCB 和DBBT，然后在 u-boot.imx 前面加上相应的信息，否则即使将 uboot 烧进去了也不能运行。
+我们使用 mfgtool 烧写系统到 NAND 里面的时候，mfgtool 会使用一个叫做“kogs-ng”的工具完成BCB 和 DBBT 的添加。
+
+但是我们可以在 uboot 里面使用“nand write”命令烧写 kernel 和 dtb。
+先编译出来 NAND版本的 kernel 和 dtb 文件，在烧写之前要先对 NAND 进行分区，也就是规划好 uboot、linux kernel、设备树和根文件系统的存储区域，I.MX6U-ALPHA 开发板出厂系统 NAND 分区如下：
+
+```sh
+0x000000000000-0x0000003FFFFF : "boot"
+0x000000400000-0x00000041FFFF : "env"
+0x000000420000-0x00000051FFFF : "logo"
+0x000000520000-0x00000061FFFF : "dtb"
+0x000000620000-0x000000E1FFFF : "kernel"
+0x000000E20000-0x000020000000 : "rootfs"
+```
+
+一共有六个分区，第一个分区存放 uboot，地址范围为 0x0~0x3FFFFF(共 4MB)；
+第二个分区存放 env（环境变量），地址范围为 0x400000~0x420000(共 128KB)；
+第三个分区存放 logo(启动图标)，地址范围为 0x420000~0x51FFFF(共 1MB)；
+第四个分区存放 dtb(设备树)，地址范围为0x520000~0x61FFFF(共 1MB)；
+第五个分区存放 kernel(也就是 linux kernel)，地址范围为0x620000~0xE1FFFF(共 8MB)；
+剩下的所有存储空间全部作为最后一个分区，存放 rootfs(根文件系统)。
+
+可以看出 kernel 是从地址 0x620000 开始存放的，将 NAND 版本 kernel 对应的 zImage 文件放到 Ubuntu 中的 tftpboot 目录中，然后使用 tftp 命令将其下载到开发板的 0X87800000 地址处，最终使用“nand write”将其烧写到 NAND 中，命令如下：
+
+```sh
+tftp 0x87800000 zImage //下载 zImage 到 DRAM 中
+nand erase 0x620000 0x800000 //从地址 0x620000 开始擦除 8MB 的空间
+nand write 0x87800000 0x620000 0x800000 //将接收到的 zImage 写到 NAND 中
+```
+
+这里我们擦除了 8MB 的空间，因为一般 zImage 就是 6,7MB 左右，8MB 肯定够了，如果不够的话就再多擦除一点就行了。
+
+同理，最后烧写设备树(dtb)文件文件，命令如下：
+
+```sh
+tftp 0x87800000 imx6ull-14x14-emmc-7-1024x600-c.dtb //下载 dtb 到 DRAM 中
+nand erase 0x520000 0x100000 //从地址 0x520000 开始擦除 1MB 的空间
+nand write 0x87800000 0x520000 0x100000 //将接收到的 dtb 写到 NAND 中
+```
+
+dtb 文件一般只有几十 KB，所以擦除 1M 是绰绰有余的了。
+注意！正点原子出厂系统在NAND 里面烧写了很多种设备树文件！
+这里只是举例烧写一种的方法，我们在实际产品开发中肯定只有一种设备树。
+
+根文件系统(rootfs)就不要在 uboot 中更新了，还是使用 NXP 提供的 Mfgtool 工具来烧写，因为根文件系统太大！很有可能超过开发板 DRAM 的大小，这样连下载都没法下载，更别说更新了。
+
+5. **nand read**
+
+此命令用于从 NAND 中的指定地址读取指定大小的数据到 DRAM 中，命令格式如下：
+`nand read addr off size`
+addr 是目的地址，off 是要读取的 NAND 中的数据源地址，size 是要读取的数据大小。
+比如我们读取设备树(dtb)文件到 0x83000000 地址处，命令如下：
+
+```sh
+nand read 0x83000000 0x520000 0x19000
+```
+
+结果如图：
+![alt](./images/Snipaste_2024-12-06_19-33-17.png)
+
+设备树文件读取到 DRAM 中以后就可以使用 fdt 命令来对设备树进行操作了，首先设置 fdt的地址，fdt 地址就是 DRAM 中设备树的首地址，命令如下：
+
+`fdt addr 83000000`
+
+设置好以后可以使用“fdt header”来查看设备树的头信息，输入命令：
+
+`fdt header`
+
+![alt](./images/Snipaste_2024-12-06_19-34-13.png)
+
+输入命令“fdt print”就可以查看设备树文件的内容，输入命令：
+`fdt print`
+
+结果如图：
+![alt](./images/Snipaste_2024-12-06_19-34-50.png)
+
+图中的文件就是我们写到 NAND 中的设备树文件，至于设备树文件的详细内容我们后面会有专门的章节来讲解，这里大家知道这个文件就行了。
+NAND 常用的操作命令就是擦除、读和写，至于其他的命令大家可以自行研究一下，一定不要尝试全片擦除 NAND 的指令！！否则 NAND 就被全部擦除掉了，什么都没有了，又得重头烧整个系统。
+
+#### 30.4.9 BOOT操作命令(*)
+
+uboot 的本质工作是引导 Linux，所以 uboot 肯定有相关的 boot(引导)命令来启动 Linux。  
+常用的跟 boot 有关的命令有：bootz、bootm 和 boot。  
+
+1. **bootz命令**  
+
+要启动 Linux，需要先将 Linux 镜像文件拷贝到 DRAM 中，如果使用到设备树的话也需要将设备树拷贝到 DRAM 中。  
+可以从 EMMC 或者 NAND 等存储设备中将 Linux 镜像和设备树文件拷贝到 DRAM，也可以通过 nfs 或者 tftp 将 Linux 镜像文件和设备树文件下载到 DRAM 中。  
+不管用那种方法，只要能将 Linux 镜像和设备树文件存到 DRAM 中就行，然后使用 bootz 命令来启动，bootz 命令用于启动 zImage 镜像文件，bootz 命令格式如下：  
+`bootz [addr [initrd[:size]] [fdt]]`  
+命令 bootz 有三个参数，addr 是 Linux 镜像文件在 DRAM 中的位置，initrd 是 initrd 文件在DRAM 中的地址，如果不使用 initrd 的话使用‘-’代替即可，fdt 就是设备树文件在 DRAM 中的地址。  
+现在我们使用网络和 EMMC 两种方法来启动 Linux 系统，首先将 I.MX6U-ALPHA 开发板的 Linux 镜像和设备树发送到 Ubuntu 主机中的 tftpboot 文件夹下。
+
+Linux 镜像文件前面已经放到了 tftpboot 文件夹中，现在把设备树文件放到 tftpboot 文件夹里面。
+由于不同的屏幕其设备树不同，因此我们出厂系统提供了很多设备树。  
+路径为：开发板光盘->8、系统镜像->1、出厂系统镜像->2、kernel 镜像->linux-imx-4.1.15-2.1.0-gbfed875-v1.6.
+所有设备树文件如图:
+![alt](./images/Snipaste_2024-12-06_19-50-15.png)
+
+可以看出，我们提供了 14 种设备树，笔者正在使用的是 EMMC 核心板，7 寸1024×600 分辨率的屏幕，所以需要使用 imx6ull-14x14-emmc-7-1024x600-c.dtb 这个设备树。
+将imx6ull-14x14-emmc-7-1024x600-c.dtb 发送到 Ubuntu 主机中的 tftpboot 文件夹里面，完成以后的 tftpboot 文件夹如图:
+
+![alt](./images/Snipaste_2024-12-06_19-51-55.png)
+
+给予 imx6ull-14x14-emmc-7-1024x600-c.dtb 可执行权限，命令如下：
+
+`chmod 777 imx6ull-14x14-emmc-7-1024x600-c.dtb`
+
+Linux 镜像文件和设备树都准备好了，我们先学习如何通过网络启动 Linux，使用 tftp 命令将zImage下载到DRAM的0X80800000地址处，然后将设备树imx6ull-14x14-emmc-7-1024x600-c.dtb 下载到 DRAM 中的 0X83000000 地址处，最后之后命令 bootz 启动，命令如下：
+```sh
+tftp 80800000 zImage
+tftp 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb
+bootz 80800000 - 83000000
+```
+
+运行结果如图：
+![alt](./images/Snipaste_2024-12-06_19-55-03.png)
+
+上图就是我们通过 tftp 和 bootz 命令来从网络启动 Linux 系统，如果我们要从 EMMC 中启动 Linux 系统的话只需要使用命令 fatload 将 zImage 和 imx6ull-14x14-emmc-7-1024x600-c.dtb 从EMMC 的分区 1 中拷贝到 DRAM 中，然后使用命令 bootz 启动即可。
+
+先使用命令 fatls 查看要下 EMMC 的分区 1 中有没有 Linux 镜像文件和设备树文件，如果没有的话参考 30.4.6 小节中讲解的 fatwrite 命令将 tftpboot 中的 zImage 和 imx6ull-14x14-emmc-7-1024x600-c.dtb 文件烧写到 EMMC 的分区 1 中。
+然后使用命令 fatload 将 zImage 和 imx6ull-14x14-emmc-7-1024x600-c.dtb文件拷贝到 DRAM 中，地址分别为 0X80800000 和 0X83000000，最后使用 bootz 启动，命令如下：
+
+```sh
+fatload mmc 1:1 80800000 zImage
+fatload mmc 1:1 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb
+bootz 80800000 - 83000000
+```
+查看文件是否存在
+![alt](./images/Snipaste_2024-12-06_20-00-44.png)
+load入内存
+![alt](./images/Snipaste_2024-12-06_20-01-11.png)
+![alt](./images/Snipaste_2024-12-06_20-02-07.png)
+bootz启动：
+![alt](./images/Snipaste_2024-12-06_20-03-29.png)
+
+参考结果：
+![alt](./images/Snipaste_2024-12-06_20-04-01.png)
+
+2. **bootm 命令**
+
+bootm 和 bootz 功能类似，但是 bootm 用于启动 uImage 镜像文件。
+如果不使用设备树的话启动 Linux 内核的命令如下：
+
+`bootm addr`
+
+addr 是 uImage 镜像在 DRAM 中的首地址。
+
+如果要使用设备树，那么 bootm 命令和 bootz 一样，命令格式如下：
+
+`bootm [addr [initrd[:size]] [fdt]]`
+
+其中 addr 是 uImage 在 DRAM 中的首地址，initrd 是 initrd 的地址，fdt 是设备树(.dtb)文件在 DRAM 中的首地址，如果 initrd 为空的话，同样是用“-”来替代。
+
+补充uImage 与 zImage:
+
+    uImage 和 zImage 都是 Linux 内核映像文件格式，主要用于嵌入式系统和一些其他平台，它们的区别在于它们如何进行压缩和打包。
+    下面是这两者的区别：
+    1. uImage
+        定义：uImage 是一个经过压缩并加上头部信息的内核映像文件格式。
+        通常，它是通过 mkimage 工具从 zImage 文件生成的。
+        结构：uImage 包含一个头部，这个头部描述了映像的类型、大小、加载地址、入口地址等信息。
+        头部还包括校验和等元数据，用于引导加载程序（如 U-Boot）正确加载内核。
+        压缩格式：uImage 通常使用 gzip、bzip2 或 lzma 等压缩格式来压缩内核映像。
+        用途：uImage 格式的内核通常用于 U-Boot 引导加载器，U-Boot 会解析 uImage 文件头并将其加载到内存中，然后启动内核。
+
+    2. zImage
+        定义：zImage 是一个压缩过的内核映像文件，它是 Linux 内核的压缩版本，可以直接由引导加载程序（如 U-Boot 或其他）加载。
+        结构：zImage 是直接压缩的内核映像文件，通常是通过 gzip 压缩生成的，但它没有额外的文件头信息（没有描述文件元数据的头部）。
+        其大小相对较小。
+        压缩格式：zImage 通常采用 gzip 压缩方式。
+        用途：zImage 可以被直接加载到内存并启动，适用于很多嵌入式系统或一些简化的引导加载程序。
+    
+    总结
+    uImage 是带有头部信息并且通常适合与 U-Boot 等引导加载器一起使用的内核映像格式。
+    zImage 是直接压缩的内核映像格式，通常适用于更简单的引导加载程序，且不包含额外的头部信息。
+    简而言之，uImage 可以看作是 zImage 的一种增强版，具有更多元数据来支持引导加载，而 zImage 则是更基础的、仅包含压缩内核的格式。
+
+3. **boot命令**
+
+boot 命令也是用来启动 Linux 系统的，只是 boot 会读取环境变量 bootcmd 来启动 Linux 系统，bootcmd 是一个很重要的环境变量！
+其名字分为“boot”和“cmd”，也就是“引导”和“命令”，说明这个环境变量保存着引导命令，其实就是启动的命令集合，具体的引导命令内容是可以修改的。
+![alt](./images/Snipaste_2024-12-06_20-41-59.png)
+
+比如我们要想使用 tftp 命令从网络启动 Linux 那么就可以设置 bootcmd 为“tftp
+80800000 zImage; tftp 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb; bootz 80800000 - 83000000”，然后使用 saveenv 将 bootcmd 保存起来。
+
+然后直接输入 boot 命令即可从网络启动Linux 系统，命令如下：
+```sh
+setenv bootcmd 'tftp 80800000 zImage; tftp 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb; bootz 80800000 - 83000000'
+saveenv
+boot
+```
+运行结果如图:
+![alt](./images/Snipaste_2024-12-06_20-44-14.png)
+
+前面说过 uboot 倒计时结束以后就会启动 Linux 系统，其实就是执行的 bootcmd 中的启动命令。
+只要不修改 bootcmd 中的内容，以后每次开机 uboot 倒计时结束以后都会使用 tftp 命令从网络下载 zImage 和 imx6ull-14x14-emmc-7-1024x600-c.dtb，然后启动 Linux。
+如果想从 EMMC 启动那就设置 bootcmd 为“fatload mmc 1:1 80800000 zImage; fatload mmc 1:1 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb; bootz 80800000 - 83000000”，然后使用 boot命令启动即可，命令如下：
+```sh
+setenv bootcmd 'fatload mmc 1:1 80800000 zImage; fatload mmc 1:1 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb; bootz 80800000 - 83000000'
+savenev
+boot
+```
+运行结果如图:
+![alt](./images/Snipaste_2024-12-06_20-46-18.png)
+
+如果不修改 bootcmd 的话，每次开机 uboot 倒计时结束以后都会自动从 EMMC 里面读取zImage 和 imx6ull-14x14-emmc-7-1024x600-c.dtb，然后启动 Linux。
+
+在启动 Linux 内核的时候可能会遇到如下错误：
+`“Kernel panic – not Syncing: VFS: Unable to mount root fs on unknown-block(0,0)”`
+
+这个错误的原因是 linux 内核没有找到根文件系统，这个很正常，因为没有设置 uboot 的bootargs 环境变量，关于 bootargs 环境变量后面会讲解！
+此处我们重点是验证 boot 命令，linux内核已经成功启动了，说明 boot 命令工作正常。
+
+#### 30.4.10 其他常用命令
+
+uboot 中还有其他一些常用的命令，比如 reset、go、run 和 mtest 等。
+
+1. **reset命令**
+
+reset 命令顾名思义就是复位的，输入“reset”即可复位重启，如图所示：
+![alt](./images/Snipaste_2024-12-06_20-48-27.png)
+
+2. **go命令**
+
+go 命令用于跳到指定的地址处执行应用，命令格式如下：
+`go addr [arg ...]`
+
+addr 是应用在 DRAM 中的首地址，我们可以编译一下裸机例程的实验 13_printf，然后将编译出来的 printf.bin 拷贝到 Ubuntu 中的 tftpboot 文件夹里面，注意，这里要拷贝 printf.bin 文件，不需要在前面添加 IVT 信息，因为 uboot 已经初始化好了 DDR 了。
+使用 tftp 命令将 printf.bin下载到开发板 DRAM 的 0X87800000 地址处，因为裸机例程的链接首地址就是 0X87800000，最后使用 go 命令启动 printf.bin 这个应用，命令如下：
+```sh
+tftp 87800000 printf.bin
+go 87800000
+```
+结果如下图：
+![alt](./images/Snipaste_2024-12-06_21-54-40.png)
+
+通过 go 命令我们就可以在 uboot 中运行裸机例程。
+
+3. **run命令**
+
+run 命令用于运行环境变量中定义的命令，比如可以通过“run bootcmd”来运行 bootcmd 中的启动命令，但是 run 命令最大的作用在于运行我们自定义的环境变量。
+在后面调试 Linux 系统的时候常常要在网络启动和 EMMC/NAND 启动之间来回切换，而 bootcmd 只能保存一种启动方式，如果要换另外一种启动方式的话就得重写 bootcmd，会很麻烦。
+这里我们就可以通过自定义环境变量来实现不同的启动方式，比如定义环境变量 mybootemmc 表示从 emmc 启动，定义 mybootnet 表示从网络启动，定义 mybootnand 表示从 NAND 启动。
+如果要切换启动方式的话只需要运行“run mybootxxx(xxx 为 emmc、net 或 nand)”即可。
+
+说干就干，创建环境变量 mybootemmc、mybootnet 和 mybootnand，命令如下：
+```sh
+setenv mybootemmc 'fatload mmc 1:1 80800000 zImage; fatload mmc 1:1 83000000 imx6ull14x14-emmc-7-1024x600-c.dtb;bootz 80800000 - 83000000'
+
+setenv mybootnand 'nand read 80800000 4000000 800000;nand read 83000000 6000000 100000;bootz 80800000 - 83000000'
+
+setenv mybootnet 'tftp 80800000 zImage; tftp 83000000imx6ull-14x14-emmc-7-1024x600-c.dtb;bootz 80800000 - 83000000'
+
+saveenv
+```
+创建环境变量成功以后就可以使用 run 命令来运行 mybootemmc、mybootnet 或 mybootnand来实现不同的启动：
+```sh
+run mybootemmc
+
+run mytoobnand
+
+run mybootnet
+```
+
+4. **mtest命令**
+
+mtest 命令是一个简单的内存读写测试命令，可以用来测试自己开发板上的 DDR，命令格式如下：
+`mtest [start [end [pattern [iterations]]]]`
+
+start是要测试的DRAM 开始地址，end 是结束地址，比如我们测试 0X80000000~0X80001000这段内存
+输入 `mtest 80000000 80001000`，结果如图:
+![alt](./images/Snipaste_2024-12-06_22-00-51.png)
+
+如果要结束测试就按下键盘上的“Ctrl+C”键。
+
+至此，uboot 常用的命令就讲解完了，如果要使用 uboot 的其他命令，可以查看 uboot 中的帮助信息，或者上网查询一下相应的资料。
+
+## 第三十一章 U-Boot 顶层Makefile详解
+
+上一章我们详细的讲解了 uboot 的使用方法，其实就是各种命令的使用，学会 uboot 使用以后就可以尝试移植 uboot 到自己的开发板上了，但是在移植之前需要我们得先分析一遍 uboot的启动流程源码，得捋一下 uboot 的启动流程，否则移植的时候都不知道该修改那些文件。
+本章我们就来分析一下正点原子提供的 uboot 源码，重点是分析 uboot 启动流程，而不是整个 uboot源码，uboot 整个源码非常大，我们只看跟我们关心的部分即可。
 
