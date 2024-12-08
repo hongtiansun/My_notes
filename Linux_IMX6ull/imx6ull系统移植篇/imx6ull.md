@@ -1030,3 +1030,873 @@ start是要测试的DRAM 开始地址，end 是结束地址，比如我们测试
 上一章我们详细的讲解了 uboot 的使用方法，其实就是各种命令的使用，学会 uboot 使用以后就可以尝试移植 uboot 到自己的开发板上了，但是在移植之前需要我们得先分析一遍 uboot的启动流程源码，得捋一下 uboot 的启动流程，否则移植的时候都不知道该修改那些文件。
 本章我们就来分析一下正点原子提供的 uboot 源码，重点是分析 uboot 启动流程，而不是整个 uboot源码，uboot 整个源码非常大，我们只看跟我们关心的部分即可。
 
+### 31.1 U-Boot工程目录分析
+
+本书我们以 EMMC 版本的核心板为例讲解，为了方便，uboot 启动源码分析就在 Windows下进行，将正点原子提供的 uboot 源码进行解压，解压完成以后的目录如图所示：
+
+![alt](./images/Snipaste_2024-12-07_22-09-03.png)
+
+正点原子提供的未编译的 uboot 源码目录，我们在分析 uboot 源码之前一定要先在 Ubuntu 中编译一下 uboot 源码，因为编译过程会生成一些文件，而生成的这些恰恰是分析uboot 源码不可或缺的文件。
+使用上一章创建的 shell 脚本来完成编译工作:
+```sh
+cd alientek_uboot //进入正点原子 uboot 源码目录
+./mx6ull_alientek_emmc.sh //编译 uboot
+cd ../ //返回上一级目录
+tar -vcjf alientek_uboot.tar.bz2 alientek_uboot //压缩
+```
+上述tar命令只会打包，不会压缩！！！
+注意：我们可以使用此命令 `tar -zcvf file.tar.gz 被压缩文件/目录` 进行压缩，然后导入Windows，解压！
+![alt](./images/Snipaste_2024-12-07_22-17-40.png)
+解压中出现了如图错误！
+
+编译后文档：
+![alt](./images/Snipaste_2024-12-07_22-19-53.png)
+
+对比编译前和编译后的文档，可以看出编译后的 uboot 要比没编译之前多了好多文件，这些文件夹或文件的含义见图所示：
+文件夹：
+![alt](./images/Snipaste_2024-12-07_22-21-47.png)
+![alt](./images/Snipaste_2024-12-07_22-22-29.png)
+文件：
+![alt](./images/Snipaste_2024-12-07_22-23-19.png)
+
+我们要关注的文件夹或文件如下：
+
+1. **arch文件夹**
+
+这个文件夹里面存放着和架构有关的文件
+如图：
+![alt](./images/Snipaste_2024-12-08_15-00-52.png)
+
+可以看出有很多架构，比如 arm、avr32、m68k 等，我们现在用的是 ARM 芯片，所以只需要关心 arm 文件夹即可，打开 arm 文件夹里面内容如图:
+![alt](./images/Snipaste_2024-12-08_15-02-01.png)
+
+图中只截取了一部分，还有一部分 mach-xxx 的文件夹。
+mach 开头的文件夹是跟具体的设备有关的，比如“mach-exynos”就是跟三星的 exyons 系列 CPU 有关的文件。
+我们使用的是 I.MX6ULL，所以要关注“imx-common”这个文件夹。
+
+另外“cpu”这个文件夹也是和 cpu 架构有关的，打开以后如图：
+![alt](./images/Snipaste_2024-12-08_15-03-29.png)
+
+从图可以看出有多种 ARM 架构相关的文件夹，I.MX6ULL 使用的 Cortex-A7 内核，Cortex-A7 属于 armv7，所以我们要关心“armv7”这个文件夹。
+
+cpu 文件夹里面有个名为“uboot.lds”的链接脚本文件，这个就是 ARM 芯片所使用的 u-boot 链接脚本文件！
+armv7 这个文件夹里面的文件都是跟 ARMV7 架构有关的，是我们分析 uboot 启动源码的时候需要重点关注的。
+
+2. **board文件夹**
+
+board 文件夹就是和具体的板子有关的，打开此文件夹，里面全是不同的板子，毫无疑问正点原子的开发板肯定也在里面(正点原子添加的)，borad 文件夹里面有个名为“freescale”的文件夹，如图：
+![alt](./images/Snipaste_2024-12-08_15-06-10.png)
+
+所有使用 freescale 芯片的板子都放到此文件夹中，I.MX 系列以前属于 freescale，只是freescale 后来被 NXP 收购了。
+打开此 freescale 文件夹，在里面找到和 mx6u(I.MX6UL/ULL)有关的文件夹
+![alt](./images/Snipaste_2024-12-08_15-08-04.png)
+
+图中有 5 个文件夹，这 5 个文件夹对应 5 种板子，以“mx6ul”开头的表示使用I.MX6UL 芯片的板子，以 mx6ull 开头的表示使用 I.MX6ULL 芯片的板子:
+mx6ullevk 是 NXP官方的I.MX6ULL开发板，正点原子的ALPHA开发板就是在这个基础上开发的，因此mx6ullevk也是正点原子的开发板。
+我们后面移植 uboot 到时候就是参考 NXP 官方的开发板，也就是要参考 mx6ullevk 这个文件夹来定义我们的板子。
+
+3. **configs文件夹**
+
+此文件夹为 uboot 配置文件，uboot 是可配置的，但是你要是自己从头开始一个一个项目的配置，那就太麻烦了，因此一般半导体或者开发板厂商都会制作好一个配置文件。
+我们可以在这个做好的配置文件基础上来添加自己想要的功能，这些半导体厂商或者开发板厂商制作好的配置文件统一命名为“xxx_defconfig”，xxx 表示开发板名字，这些 defconfig 文件都存放在 configs文件夹，因此，NXP 官方开发板和正点原子的开发板配置文件肯定也在这个文件夹中，如图：
+![alt](./images/Snipaste_2024-12-08_15-13-07.png)
+
+图中这 6 个文件就是正点原子 I.MX6U-ALPHA 开发板所对应的 uboot 默认配置文件。
+我们只关心 mx6ull_14x14_ddr512_emmc_defconfig 和mx6ull_14x14_ddr256_nand_defconfig这两个文件，分别是正点原子 I.MX6ULL EMMC 核心板和 NAND 核心板的配置文件。
+使用
+“make xxx_defconfig”命令即可配置 uboot，比如：
+`make mx6ull_14x14_ddr512_emmc_defconfig`
+
+上述命令就是配置正点原子的 I.MX6ULL EMMC 核心板所使用的 uboot。
+<span style="color:red">在编译 uboot 之前一定要使用 defconfig 来配置 uboot！</span>
+
+在 mx6ull_alientek_emmc.sh 中就有下面这一句：
+`make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-  mx6ull_14x14_ddr512_emmc_defconfig`
+
+这个就是调用 mx6ull_14x14_ddr512_emmc_defconfig 来配置 uboot，只是这个命令还带了一些其它参数而已。
+
+4. **.u-boot.xxx_cmd文件**
+
+.u-boot.xxx_cmd 是一系列的文件，这些文件都是编译生成的，都是一些命令文件，比如文件.u-boot.bin.cmd，看名字应该是和 u-boot.bin 有关的，此文件的内容如下：
+![alt](./images/Snipaste_2024-12-08_15-18-34.png)
+
+.u-boot.bin.cmd 里面定义了一个变量：cmd_u-boot.bin，此变量的值为“cp u-boot-nodtb.bin u-boot.bin”，也就是拷贝一份 u-boot-nodtb.bin 文件，并且重命名为 u-boot.bin，这个就是 u-boot.bin的来源，来自于文件 u-boot-nodtb.bin。
+
+那么u-boot-nodtb.bin是怎么来的呢？文件.u-boot-nodtb.bin.cmd就是用于生成uboot.nodtb.bin 的，此文件内容如下：
+![alt](./images/Snipaste_2024-12-08_15-21-13.png)
+
+这里用到了 arm-linux-gnueabihf-objcopy，使用 objcopy 将 ELF 格式的 u-boot 文件转换为二进制的 u-boot-nodtb.bin 文件。
+文件 u-boot 是 ELF 格式的文件，文件.u-boot.cmd 用于生成 u-boot,文件内容如下：
+![alt](./images/Snipaste_2024-12-08_15-22-53.png)
+
+u-boot.cmd 使用到了 arm-linux-gnueabihf-ld.bfd，也就是链接工具，使用 ld.bfd 将各个 builtin.o 文件链接在一起就形成了 u-boot 文件。
+uboot 在编译的时候会将同一个目录中的所有.c 文件都编译在一起，并命名为 built-in.o，相当于将众多的.c 文件对应的.o 文件集合在一起，这个就是 u-boot 文件的来源。
+
+如果我们要用 NXP 提供的 MFGTools 工具向开发板烧写 uboot，此时烧写的是 u-boot.imx文件，而不是 u-boot.bin 文件。
+u-boot.imx 是在 u-boot.bin 文件的头部添加了 IVT、DCD 等信息。
+这个工作是由文件.u-boot.imx.cmd 来完成的，此文件内容如下：
+![alt](./images/Snipaste_2024-12-08_15-25-13.png)
+
+可以看出，这里用到了工具 tools/mkimage，而 IVT、DCD 等数据保存在了文件board/freescale/mx6ullevk/imximage-ddr512.cfg.cfgtmp 中 (如果是NAND核心 板的话就是imximage-ddr256.cfg.cfgtmp)，工具 mkimage 就是读取文件 imximage-ddr512.cfg.cfgtmp 里面的信息，然后将其添加到文件 u-boot.bin 的头部，最终生成 u-boot.imx。
+
+文件.u-boot.lds.cmd 就是用于生成 u-boot.lds 链接脚本的，由于.u-boot.lds.cmd 文件内容太多，这里就不列出来了。
+uboot 根目录下的 u-boot.lds 链接脚本就是来源于 arch/arm/cpu/u-boot.lds文件。
+还有一些其它的.u-boot.lds.xxx.cmd 文件，大家自行分析一下，关于.u-boot.lds.xxx.cmd 文件就讲解到这里。
+
+5. **Makefile文件**
+
+这个是顶层 Makefile 文件，Makefile 是支持嵌套的，也就是顶层 Makefile 可以调用子目录中的 Makefile 文件。
+Makefile 嵌套在大项目中很常见，一般大项目里面所有的源代码都不会放到同一个目录中，各个功能模块的源代码都是分开的，各自存放在各自的目录中。
+每个功能模块目录下都有一个 Makefile，这个 Makefile 只处理本模块的编译链接工作，这样所有的编译链接工作就不用全部放到一个 Makefile 中，可以使得 Makefile 变得简洁明了。
+
+uboot 源码根目录下的 Makefile 是顶层 Makefile，他会调用其它的模块的 Makefile 文件，比如 drivers/adc/Makefile。
+当然了，顶层 Makefile 要做的工作可远不止调用子目录 Makefile 这么简单，关于顶层 Makefile 的内容我们稍后会有详细的讲解。
+
+6. **u-boot.xxx文件**
+
+u-boot.xxx 同样也是一系列文件，包括 u-boot、u-boot.bin、u-boot.cfg、u-boot.imx、u-boot.lds、u-boot.map、u-boot.srec、u-boot.sym 和 u-boot-nodtb.bin，这些文件的含义如下：
+
+u-boot：编译出来的 ELF 格式的 uboot 镜像文件。
+u-boot.bin：编译出来的二进制格式的 uboot 可执行镜像文件。
+u-boot.cfg：uboot 的另外一种配置文件。
+u-boot.imx：u-boot.bin 添加头部信息以后的文件，NXP 的 CPU 专用文件。
+u-boot.lds：链接脚本。
+u-boot.map：uboot 映射文件，通过查看此文件可以知道某个函数被链接到了哪个地址上。
+u-boot.srec：S-Record 格式的镜像文件。
+u-boot.sym：uboot 符号文件。
+u-boot-nodtb.bin：和 u-boot.bin 一样，u-boot.bin 就是 u-boot-nodtb.bin 的复制文件。
+
+7. **.config文件**
+
+uboot 配置文件，使用命令“make xxx_defconfig”配置 uboot 以后就会自动生成，.config 内容如下：
+![alt](./images/Snipaste_2024-12-08_15-37-16.png)
+![alt](./images/Snipaste_2024-12-08_15-37-38.png)
+![alt](./images/Snipaste_2024-12-08_15-37-56.png)
+
+可以看出.config 文件中都是以“CONFIG_”开始的配置项，这些配置项就是 Makefile 中的变量，因此后面都跟有相应的值，uboot 的顶层 Makefile 或子 Makefile 会调用这些变量值。
+在.config 中会有大量的变量值为‘y’，这些为‘y’的变量一般用于控制某项功能是否使能，为‘y’的话就表示功能使能，比如：
+`CONFIG_CMD_BOOTM=y`
+
+如果使能了 bootd 这个命令的话，CONFIG_CMD_BOOTM 就为‘y’。
+在 cmd/Makefile 中有如下代码：
+![alt](./images/Snipaste_2024-12-08_15-40-03.png)
+其中有一行代码为：
+`obj-$(CONFIG_CMD_BOOTM) += bootm.o`
+
+CONFIG_CMD_BOOTM=y，将其展开就是：
+`obj-y += bootm.o`
+
+也就是给 obj-y 追加了一个“bootm.o”，obj-y 包含着所有要编译的文件对应的.o 文件，这里表示需要编译文件 cmd/bootm.c。
+相当于通过“CONFIG_CMD_BOOTD=y”来使能 bootm 这个命令，进而编译 cmd/bootm.c 这个文件，这个文件实现了命令 bootm。
+在 uboot 和 Linux 内核中都是采用这种方法来选择使能某个功能，编译对应的源码文件。
+
+8. **README**
+
+README 文件描述了 uboot 的详细信息，包括 uboot 该如何编译、uboot 中各文件夹的含义、相应的命令等等。
+建议大家详细的阅读此文件，可以进一步增加对 uboot 的认识。
+
+关于 uboot 根目录中的文件和文件夹的含义就讲解到这里，接下来就要开始分析 uboot 的启动流程了。
+
+### 31.2 VScode工程创建
+
+先在 Ubuntu 下编译一下 uboot，然后将编译后的 uboot 文件夹复制到 windows 下，并创建VScode 工程。
+打开 VScode，选择：文件->打开文件夹…，选中 uboot 文件夹，如图 ：
+![alt](./images/Snipaste_2024-12-08_15-47-16.png)
+
+此时便可以在code中打开项目。
+点击“文件->将工作区另存为…”，打开保存工作区对话框，将工作区保存到 uboot 源码根目录下，设置文件名为“uboot”，如图所示：
+![alt](./images/Snipaste_2024-12-08_15-51-58.png)
+
+保存成功以后就会在 uboot 源码根目录下存在一个名为 uboot.code-workspace 的文件。
+这样一个完整的 VSCode 工程就建立起来了。
+但是这个 VSCode 工程包含了 uboot 的所有文件，uboot中有些文件是不需要的，比如 arch 目录下是各种架构的文件夹，如图:
+![alt](./images/Snipaste_2024-12-08_15-53-20.png)
+
+在 arch 目录下，我们只需要 arm 文件夹，所以需要将其它的目录从 VSCode 中给屏蔽掉，比如将 arch/avr32 这个目录给屏蔽掉。
+
+在 VSCode 上建名为“.vscode”的文件夹，如图:
+![alt](./images/Snipaste_2024-12-08_15-54-33.png)
+
+在.vscode 文件夹中新建一个名为“settings.json”的文件，然后在 settings.json 中输入如下内容:
+```json
+1 {
+2   "search.exclude": {
+3       "**/node_modules": true,
+4       "**/bower_components": true,
+5   },
+6   "files.exclude": {
+7       "**/.git": true,
+8       "**/.svn": true,
+9       "**/.hg": true,
+10      "**/CVS": true,
+11      "**/.DS_Store": true,
+12  }
+13 }
+```
+![alt](./images/Snipaste_2024-12-08_15-56-15.png)
+
+其中"search.exclude"里面是需要在搜索结果中排除的文件或者文件夹，"files.exclude"是左侧工程目录中需要排除的文件或者文件夹。
+我们需要将 arch/avr32 文件夹下的所有文件从搜索结果和左侧的工程目录中都排除掉，因此在"search.exclude"和"files.exclude"中输入如图所示内容：
+![alt](./images/Snipaste_2024-12-08_15-58-25.png)
+保存一下 settings.json 文件，然后再看一下左侧的工程目录，发现 arch 目录下没有 avr32 这个文件夹了，说明 avr32 这个文件夹被排除掉了。
+![alt](./images/Snipaste_2024-12-08_15-59-46.png)
+
+我们只是在"search.exclude"和"files.exclude"中加入了："arch/avr32": true，冒号前面的是要排除的文件或者文件夹，冒号后面为是否将文件排除，true 表示排除，false 表示不排除。
+用这种方法即可将不需要的文件，或者文件夹排除掉，对于本章我们分析 uboot 而言，在"search.exclude"和"files.exclude"中需要输入的完成的内容如下：
+```json
+1 "**/*.o":true,
+2 "**/*.su":true,
+3 "**/*.cmd":true,
+4 "arch/arc":true,
+5 "arch/avr32":true,
+6 "arch/blackfin":true,
+7 "arch/m68k":true,
+8 "arch/microblaze":true,
+9 "arch/mips":true,
+10 "arch/nds32":true,
+11 "arch/nios2":true,
+12 "arch/openrisc":true,
+13 "arch/powerpc":true,
+14 "arch/sandbox":true,
+15 "arch/sh":true,
+16 "arch/sparc":true,
+17 "arch/x86":true,
+18 "arch/arm/mach*":true,
+19 "arch/arm/cpu/arm11*":true,
+20 "arch/arm/cpu/arm720t":true,
+21 "arch/arm/cpu/arm9*":true,
+22 "arch/arm/cpu/armv7m":true,
+23 "arch/arm/cpu/armv8":true,
+24 "arch/arm/cpu/pxa":true,
+25 "arch/arm/cpu/sa1100":true,
+26 "board/[a-e]*":true,
+27 "board/[g-z]*":true,
+28 "board/[0-9]*":true,
+29 "board/[A-Z]*":true,
+30 "board/fir*":true,
+31 "board/freescale/b*":true,
+32 "board/freescale/l*":true,
+33 "board/freescale/m5*":true,
+34 "board/freescale/mp*":true,
+35 "board/freescale/c29*":true,
+36 "board/freescale/cor*":true,
+37 "board/freescale/mx7*":true,
+38 "board/freescale/mx2*":true,
+39 "board/freescale/mx3*":true,
+40 "board/freescale/mx5*":true,
+41 "board/freescale/p*":true,
+42 "board/freescale/q*":true,
+43 "board/freescale/t*":true,
+44 "board/freescale/v*":true,
+45 "configs/[a-l]*":true,
+46 "configs/[n-z]*":true,
+47 "configs/[A-Z]*":true,
+48 "configs/M[a-z]*":true,
+49 "configs/M[A-Z]*":true,
+50 "configs/M[0-9]*":true,
+51 "configs/m[a-w]*":true,
+52 "configs/m[0-9]*":true,
+53 "configs/[0-9]*":true,
+54 "include/configs/[a-l]*":true,
+55 "include/configs/[n-z]*":true,
+56 "include/configs/[A-Z]*":true,
+57 "include/configs/m[a-w]*":true,
+```
+
+上述代码用到了通配符“\*”，比如“\*\*\/\*.o”表示所有.o 结尾的文件。“configs/[a-l]\*”表示 configs 目录下所有以‘a’\~‘l’开头的文件或者文件夹。   
+上述配置只是排除了一部分文件夹，大家在实际的使用中可以根据自己的实际需求来选择将哪些文件或者文件夹排除掉。  
+排除以后我们的工程就会清爽很多，搜索的时候也不会跳出很多文件了。  
+
+### 31.3 U-Boot顶层Makefile分析
+
+在阅读 uboot 源码之前，肯定是要先看一下顶层 Makefile，分析 gcc 版本代码的时候一定是先从顶层 Makefile 开始的，然后再是子 Makefile，这样通过层层分析 Makefile 即可了解整个工程的组织结构。
+顶层 Makefile 也就是 uboot 根目录下的 Makefile 文件，由于顶层 Makefile 文件内容比较多，所以我们将其分开来看。
+
+#### 31.3.1 版本号
+
+顶层 Makefile 一开始是版本号，内容如下(为了方便分析，顶层 Makefile 代码段前段行号采用 Makefile 中的行号，因为 uboot 会更新，因此行号可能会与你所看的顶层 Makefile 有所不同)：
+
+![alt](./images/Snipaste_2024-12-08_16-06-50.png)
+
+VERSION 是主版本号，PATCHLEVEL 是补丁版本号，SUBLEVEL 是次版本号，这三个一起构成了 uboot 的版本号，比如当前的 uboot 版本号就是“2016.03”。
+EXTRAVERSION 是附加版本信息，NAME 是和名字有关的，一般不使用这两个。
+
+#### 31.3.2 MAKEFLAGS变量
+
+make 是支持递归调用的，也就是在 Makefile 中使用“make”命令来执行其他的 Makefile文件，一般都是子目录中的 Makefile 文件。
+假如在当前目录下存在一个“subdir”子目录，这个子目录中又有其对应的 Makefile 文件，那么这个工程在编译的时候其主目录中的 Makefile 就可以调用子目录中的 Makefile，以此来完成所有子目录的编译。
+主目录的 Makefile 可以使用如下代码来编译这个子目录：
+`$(MAKE) -C subdir`
+
+\$(MAKE)就是调用“make”命令，-C 指定子目录。
+有时候我们需要向子 make 传递变量，这个时候使用“export”来导出要传递给子 make 的变量即可，如果不希望哪个变量传递给子make 的话就使用“unexport”来声明不导出:
+```makefile
+export VARIABLE …… //导出变量给子 make 。
+unexport VARIABLE…… //不导出变量给子 make。
+```
+有两个特殊的变量：“SHELL”和“MAKEFLAGS”，这两个变量除非使用“unexport”声明，否则的话在整个make的执行过程中，它们的值始终自动的传递给子make。
+在uboot的主Makefile中有如下代码：
+`MAKEFLAGS += -rR --include-dir=$(CURDIR)`
+
+上述代码使用“+=”来给变量 MAKEFLAGS 追加了一些值，“-rR”表示禁止使用内置的隐含规则和变量定义，“--include-dir”指明搜索路径，”\$(CURDIR)”表示当前目录。
+
+#### 31.3.3 命令输出
+
+uboot 默认编译是不会在终端中显示完整的命令，都是短命令，如图所示：
+![alt](./images/Snipaste_2024-12-08_16-14-16.png)
+
+在终端中输出短命令虽然看起来很清爽，但是不利于分析 uboot 的编译过程。
+可以通过设置变量“V=1“来实现完整的命令输出，这个在调试 uboot 的时候很有用，结果如图:
+![alt](./images/Snipaste_2024-12-08_16-15-00.png)
+
+顶层 Makefile 中控制命令输出的代码如下：
+![alt](./images/Snipaste_2024-12-08_16-16-03.png)
+
+上述代码中先使用 ifeq 来判断"`$(origin V)`"和"`command line`"是否相等。
+这里用到了 Makefile中的函数 origin，origin 和其他的函数不一样，它不操作变量的值，origin 用于告诉你变量是哪来的，语法为：
+`$(origin <variable>)`
+
+variable 是变量名，origin 函数的返回值就是变量来源，因此`$(origin V)`就是变量 V 的来源。
+如果变量 V 是在命令行定义的那么它的来源就是"`command line`"，这样"`$(origin V)`"和"`command line`"就相等了。
+![alt](./images/Snipaste_2024-12-08_16-19-49.png)
+当这两个相等的时候变量 KBUILD_VERBOSE 就等于 V 的值，比如在命令行中输入“ V=1 “ 的 话 那 么 KBUILD_VERBOSE=1 。
+如果没有在命令行输入 V 的话KBUILD_VERBOSE=0。
+
+第 80 行判断 KBUILD_VERBOSE 是否为 1，如果 KBUILD_VERBOSE 为 1 的话变量 quiet 和 Q 都为空，如果 KBUILD_VERBOSE=0 的话变量 quiet 为“quiet_“，变量 Q 为“@”。
+综上所述：
+V=1 的话：
+![alt](./images/Snipaste_2024-12-08_16-20-32.png)
+
+V=0 或者命令行不定义 V 的话：
+![alt](./images/Snipaste_2024-12-08_16-20-53.png)
+
+Makefile 中会用到变量 quiet 和 Q 来控制编译的时候是否在终端输出完整的命令，在顶层Makefile 中有很多如下所示的命令：
+`$(Q)$(MAKE) $(build)=tools`
+
+如果 V=0 的话上述命令展开就是“`@ make $(build)=tools`”，make 在执行的时候默认会在终端输出命令，但是在命令前面加上“@”就不会在终端输出命令了。
+当 V=1 的时候 Q 就为空，上述命令就是“make $(build)=tools”，因此在 make 执行的过程，命令会被完整的输出在终端上。
+
+有些命令会有两个版本，比如：
+```makefile
+quiet_cmd_sym ?= SYM $@
+cmd_sym ?= $(OBJDUMP) -t $< > $@
+```
+sym 命令分为“quiet_cmd_sym”和“cmd_sym”两个版本，这两个命令的功能都是一样的，区别在于 make 执行的时候输出的命令不同。
+quiet_cmd_xxx 命令输出信息少，也就是短命令，而 cmd_xxx 命令输出信息多，也就是完整的命令。
+
+如果变量 quiet 为空的话，整个命令都会输出。
+如果变量 quiet 为“quiet_”的话，仅输出短版本。
+如果变量 quiet 为“silent_”的话，整个命令都不会输出。
+
+#### 31.3.4 静默输出
+
+上一小节讲了，设置 V=0 或者在命令行中不定义 V 的话，编译 uboot 的时候终端中显示的短命令，但是还是会有命令输出，有时候我们在编译 uboot 的时候不需要输出命令，这个时候就可以使用 uboot 的静默输出功能。
+编译的时候使用“make -s”即可实现静默输出，顶层 Makefile中相应的代码如下：
+![alt](./images/Snipaste_2024-12-08_16-27-05.png)
+
+第 91 行判断当前正在使用的编译器版本号是否为 4\.x，判断`$(filter 4.\%,$(MAKE_VERSION))`和“ ”(空)是否相等，如果不相等的话就成立，执行里面的语句。
+也就是说 `$(filter 4.%,$(MAKE_VERSION))`不为空的话条件就成立，这里用到了 Makefile 中的 filter 函数，这是个过滤函数，函数格式如下：
+`$(filter <pattern...>,<text>)`
+filter 函数表示以 pattern 模式过滤 text 字符串中的单词，仅保留符合模式 pattern 的单词，可以有多个模式。
+函数返回值就是符合 pattern 的字符串。
+因此`$(filter 4.%,$(MAKE_VERSION))`的含义就是在字符串“MAKE_VERSION”中找出符合“4.%”的字符(%为通配符)，MAKE_VERSION 是make工具的版本号，ubuntu16.04里面默认自带的make工具版本号为4.1，大家可以输入“make -v”查看。因此`$(filter 4.%,$(MAKE_VERSION))`不为空，条件成立，执行92~94 行的语句
+![alt](./images/Snipaste_2024-12-08_16-33-02.png)
+
+第 92 行也是一个判断语句，如果`$(filter %s ,$(firstword x$(MAKEFLAGS)))`不为空的话条件成立，变量 quiet 等于“silent_”。
+这里也用到了函数 filter，在`$(firstword x$(MAKEFLAGS)))`中过滤出符合“%s”的单词。
+到了函数 firstword，函数 firstword 是获取首单词，函数格式如下：
+`$(firstword <text>)`
+
+firstword 函数用于取出 text 字符串中的第一个单词，函数的返回值就是获取到的单词。
+当使用“make -s”编译的时候，“-s”会作为 MAKEFLAGS 变量的一部分传递给 Makefile。
+在顶层 Makfile 中添加如图所示的代码：
+![alt](./images/Snipaste_2024-12-08_16-35-11.png)
+
+图中的两行代码用于输出`$(firstword x$(MAKEFLAGS))`的结果，最后修改文件mx6ull_alientek_emmc.sh，在里面加入“-s”选项，结果如图所示：
+![alt](./images/Snipaste_2024-12-08_16-36-36.png)
+
+再次运行
+![alt](./images/Snipaste_2024-12-08_16-37-07.png)
+
+从图可以看出第一个单词是“xrRs”，将`$(filter %s ,$(firstword x$(MAKEFLAGS)))`展开就是`$(filter %s, xrRs)`，而`$(filter %s, xrRs)`的返回值肯定不为空，条件成立，quiet=silent_。
+
+第 101 行 使用 export 导出变量 quiet、Q 和 KBUILD_VERBOSE。
+
+#### 31.3.5 设置编译结果输出目录
+
+uboot 可以将编译出来的目标文件输出到单独的目录中，在 make 的时候使用“O”来指定输出目录，比如“make O=out”就是设置目标文件输出到 out 目录中。、这么做是为了将源文件和编译产生的文件分开，当然也可以不指定 O 参数，不指定的话源文件和编译产生的文件都在同一个目录内，一般我们不指定 O 参数。
+顶层 Makefile 中相关的代码如下：
+![alt](./images/Snipaste_2024-12-08_16-43-44.png)
+![alt](./images/Snipaste_2024-12-08_16-44-19.png)
+
+第 124 行判断“O”是否来自于命令行，如果来自命令行的话条件成立，KBUILD_OUTPUT就为$(O)，因此变量 KBUILD_OUTPUT 就是输出目录。
+
+第 135 行判断 KBUILD_OUTPUT 是否为空。
+
+第 139 行调用 mkdir 命令，创建 KBUILD_OUTPUT 目录，并且将创建成功以后的绝对路径赋值给 KBUILD_OUTPUT。
+至此，通过 O 指定的输出目录就存在了。
+
+#### 31.3.6 代码检查
+
+uboot 支持代码检查，使用命令“make C=1”使能代码检查，检查那些需要重新编译的文件。
+“make C=2”用于检查所有的源码文件，顶层 Makefile 中的代码如下：
+![alt](./images/Snipaste_2024-12-08_16-48-15.png)
+
+第 176 行判断 C 是否来源于命令行，如果 C 来源于命令行，那就将 C 赋值给变量KBUILD_CHECKSRC，如果命令行没有 C 的话 KBUILD_CHECKSRC 就为 0。
+
+#### 31.3.7 模块编译
+
+在 uboot 中允许单独编译某个模块，使用命令“make M=dir”即可，旧语法“make
+SUBDIRS=dir”也是支持的。
+顶层 Makefile 中的代码如下：
+![alt](./images/Snipaste_2024-12-08_16-49-54.png)
+![alt](./images/Snipaste_2024-12-08_16-50-14.png)
+
+第 186 行 判 断 是 否 定 义 了 SUBDIRS ， 如 果 定 义 了 SUBDIRS ， 变 量KBUILD_EXTMOD=SUBDIRS，这里是为了支持老语法“make SUBIDRS=dir”
+
+第 190 行判断是否在命令行定义了 M，如果定义了的话 KBUILD_EXTMOD=$(M)。
+
+第 197 行判断 KBUILD_EXTMOD 时为空，如果为空的话目标_all 依赖 all，因此要先编译出 all。否则的话默认目标_all 依赖 modules，要先编译出 modules，也就是编译模块。
+一般情况下我们不会在 uboot 中编译模块，所以此处会编译 all 这个目标。
+
+第 203 行判断 KBUILD_SRC 是否为空，如果为空的话就设置变量 srctree 为当前目录，即srctree 为“.”，一般不设置 KBUILD_SRC。
+
+第 214 行设置变量 objtree 为当前目录。
+第 215 和 216 行分别设置变量 src 和 obj，都为当前目录。
+第 218 行设置 VPATH。
+第 220 行导出变量 scrtree、objtree 和 VPATH。
+
+#### 31.3.8 获取主机架构和系统
+
+接下来顶层 Makefile 会获取主机架构和系统，也就是我们电脑的架构和系统，代码如下：
+![alt](./images/Snipaste_2024-12-08_16-57-54.png)
+
+第 227 行定义了一个变量 HOSTARCH，用于保存主机架构，这里调用 shell 命令“uname -m”获取架构名称，结果如图所示：
+![alt](./images/Snipaste_2024-12-08_17-00-08.png)
+
+可以看出当前电脑主机架构为“x86_64”，shell 中的“|”表示管道，意思是将左边的输出作为右边的输入，sed -e 是替换命令，“sed -e s/i.86/x86/”表示将管道输入的字符串中的“i.86”替换为“x86”，其他的“sed -e s”命令同理。
+对于我的电脑而言，HOSTARCH=x86_64。
+
+第 237 行定义了变量 HOSTOS，此变量用于保存主机 OS 的值，先使用 shell 命“uname -s”来获取主机 OS，结果如图所示：
+![alt](./images/Snipaste_2024-12-08_17-02-13.png)
+
+可以看出此时的主机 OS 为“Linux”，使用管道将“Linux”作为后面“tr '[:upper:]' '[:lower:]'”的输入，“tr '[:upper:]' '[:lower:]'”表示将所有的大写字母替换为小写字母，因此得到“linux”。
+最后同样使用管道，将“linux”作为“`sed -e 's/\(cygwin\).*/cygwin/'`”的输入，用于将cygwin.\*替换为 cygwin。因此，HOSTOS=linux。
+
+第 240 行导出 HOSTARCH=x86_64，HOSTOS=linux。
+![alt](./images/Snipaste_2024-12-08_17-06-04.png)
+
+#### 31.3.9 设置目标架构、交叉编译器和配置文件
+
+编译uboot的时候需要设置目标板架构和交叉编译器“ make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-”就是用于设置 ARCH 和 CROSS_COMPILE，在顶层Makefile 中代码如下：
+![alt](./images/Snipaste_2024-12-08_17-10-08.png)
+
+第 245 行判断 HOSTARCH 和 ARCH 这两个变量是否相等，主机架构(变量 HOSTARCH)是 x86_64，而我们编译的是 ARM 版本 uboot，肯定不相等，所以 CROSS_COMPILE= arm-linuxgnueabihf-。
+
+从示例代码可以看出，每次编译 uboot 的时候都要在 make 命令后面设置ARCH 和 CROSS_COMPILE，使用起来很麻烦，可以直接修改顶层 Makefile，在里面加入 ARCH和 CROSS_COMPILE 的定义，如图所示：
+![alt](./images/Snipaste_2024-12-08_17-11-43.png)
+
+按照图所示，直接在顶层 Makefile 里面定义 ARCH 和 CROSS_COMPILE，这样就不用每次编译的时候都要在 make 命令后面定义 ARCH 和 CROSS_COMPILE。
+
+继续回到示例代码中，第 249 行定义变量 KCONFIG_CONFIG，uboot 是可以配置的，这里设置配置文件为.config，.config 默认是没有的，需要使用命令“make xxx_defconfig”对 uboot 进行配置，配置完成以后就会在 uboot 根目录下生成.config。
+默认情况下.config 和xxx_defconfig 内容是一样的，因为.config 就是从 xxx_defconfig 复制过来的。
+如果后续自行调整了 uboot 的一些配置参数，那么这些新的配置参数就添加到了.config 中，而不是 xxx_defconfig。
+相当于 xxx_defconfig 只是一些初始配置，而.config 里面的才是实时有效的配置。
+
+#### 31.3.10 调用 scripts/Kbuild.include
+
+主 Makefile 会调用文件 scripts/Kbuild.include 这个文件，顶层 Makefile 中代码如下：
+![alt](./images/Snipaste_2024-12-08_17-14-20.png)
+
+include是Makefile中的一个指令，用于在当前Makefile中包含另一个Makefile或脚本。
+通过包含scripts/Kbuild.include文件，可以将该文件中定义的大量通用函数和变量引入到当前Makefile中，这些定义和规则随后可以在当前Makefile中被频繁调用，以实现特定的功能‌.
+
+使用“include”包含了文件 scripts/Kbuild.include，此文件里面定义了很多变量，如图所示：
+![alt](./images/Snipaste_2024-12-08_17-17-40.png)
+
+在 uboot 的编译过程中会用到 scripts/Kbuild.include 中的这些变量，后面用到的时候再分析。
+
+#### 31.3.11 交叉编译工具变量的设置
+
+上面我们只是设置了 CROSS_COMPILE 的名字，但是交叉编译器其他的工具还没有设置，顶层 Makefile 中相关代码如下：
+![alt](./images/Snipaste_2024-12-08_17-19-34.png)
+
+#### 31.3.12 导出其他变量
+
+接下来在顶层 Makefile 会导出很多变量，代码如下：
+![alt](./images/Snipaste_2024-12-08_17-20-36.png)
+
+这些变量中大部分都已经在前面定义了，我们重点来看一下下面这几个变量:
+`ARCH CPU BOARD VENDOR SOC CPUDIR BOARDDIR`
+
+这 7 个变量在顶层 Makefile 是找不到的，说明这 7 个变量是在其他文件里面定义的，先来看一下这 7 个变量都是什么内容，在顶层 Makefile 中输入如图所示的内容：
+![alt](./images/Snipaste_2024-12-08_17-22-11.png)
+
+修改好顶层 Makefile 以后执行如下命令：
+`make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- mytest`
+
+![alt](./images/Snipaste_2024-12-08_17-22-46.png)
+
+可以看到这 7 个变量的值，这 7 个变量是从哪里来的呢？
+在 uboot 根目录下有个文件叫做 config.mk，这 7 个变量就是在 config.mk 里面定义的，打开 config.mk 内容如下：
+![alt](./images/Snipaste_2024-12-08_17-24-40.png)
+![alt](./images/Snipaste_2024-12-08_17-25-07.png)
+![alt](./images/Snipaste_2024-12-08_17-25-23.png)
+
+第 25 行定义变量ARCH，值为`$(CONFIG_SYS_ARCH:"%"=%)` ，也就是提取CONFIG_SYS_ARCH 里面双引号“”之间的内容。（模式匹配）
+比如 CONFIG_SYS_ARCH=“arm”的话，ARCH=arm。
+第 26 行定义变量 CPU，值为`$(CONFIG_SYS_CPU:"%"=%)`。
+第 32 行定义变量 BOARD，值为`$(CONFIG_SYS_BOARD:"%"=%)`。
+第 34 行定义变量 VENDOR，值为`$(CONFIG_SYS_VENDOR:"%"=%)`。
+第 37 行定义变量 SOC，值为`$(CONFIG_SYS_SOC:"%"=%)`。
+第 44 行定义变量 CPUDIR，值为` arch/$(ARCH)/cpu$(if $(CPU),/$(CPU),)`。
+第 46 行 sinclude 和 include 的功能类似，在 Makefile 中都是读取指定文件内容，这里读取文件`$(srctree)/arch/$(ARCH)/config.mk` 的内容。
+sinclude 读取的文件如果不存在的话不会报错。
+第 47 行读取文件`$(srctree)/$(CPUDIR)/config.mk` 的内容。
+第 50 行读取文件`$(srctree)/$(CPUDIR)/$(SOC)/config.mk` 的内容
+第 54 行定义变量BOARDDIR，如果定义了VENDOR那么`BOARDDIR=$(VENDOR)/$(BOARD)`，否则的 `BOARDDIR=$(BOARD)`。
+第 60 行读取文件`$(srctree)/board/$(BOARDDIR)/config.mk`。
+
+接下来需要找到 CONFIG_SYS_ARCH、CONFIG_SYS_CPU、CONFIG_SYS_BOARD、CONFIG_SYS_VENDOR 和 CONFIG_SYS_SOC 这 5 个变量的值。
+![alt](./images/Snipaste_2024-12-08_17-31-08.png)
+
+这 5 个变量在 uboot 根目录下的.config 文件中有定义，定义如下：
+![alt](./images/Snipaste_2024-12-08_17-31-49.png)
+
+由此可知：
+![alt](./images/Snipaste_2024-12-08_17-32-19.png)
+
+#### 31.3.13 make xxx_defconfig过程
+
+在编译 uboot 之前要使用“make xxx_defconfig”命令来配置 uboot，那么这个配置过程是如何运行的呢？在顶层 Makefile 中有如下代码：
+![alt](./images/Snipaste_2024-12-08_17-33-30.png)
+![alt](./images/Snipaste_2024-12-08_17-33-49.png)
+![alt](./images/Snipaste_2024-12-08_17-34-49.png)
+![alt](./images/Snipaste_2024-12-08_17-35-27.png)
+
+第 422 行定义了变量 version_h，这变量保存版本号文件，此文件是自动生成的。
+文件include/generated/version_autogenerated.h 内容如图:
+![alt](./images/Snipaste_2024-12-08_17-36-11.png)
+
+第 423 行定义了变量 timestamp_h，此变量保存时间戳文件，此文件也是自动生成的。
+文件include/generated/timestamp_autogenerated.h 内容如图所示：
+![alt](./images/Snipaste_2024-12-08_17-37-01.png)
+
+第 425 行定义了变量 no-dot-config-targets。
+第 429 行定义了变量 config-targets，初始值为 0。
+第 430 行定义了变量 mixed-targets，初始值为 0。
+第 431 行定义了变量 dot-config，初始值为 1。
+第 433 行将 MAKECMDGOALS 中不符合 no-dot-config-targets 的部分过滤掉，剩下的如果不为空的话条件就成立。
+MAKECMDGOALS 是 make 的一个环境变量，这个变量会保存你所指定的终极目标列表，比如执行“make mx6ull_alientek_emmc_defconfig”，那么 MAKECMDGOALS就为 mx6ull_alientek_emmc_defconfig。
+很明显过滤后为空，所以条件不成立，变量 dot-config 依旧为 1。
+第439行判断KBUILD_EXTMOD是否为空，如果KBUILD_EXTMOD为空的话条件成立，经过前面的分析，我们知道 KBUILD_EXTMOD 为空，所以条件成立。
+第 440 行将 MAKECMDGOALS 中不符合“config”和“%config”的部分过滤掉，如果剩下的部分不为空条件就成立，很明显此处条件成立，变量 config-targets=1。
+第 442 行统计 MAKECMDGOALS 中的单词个数，如果不为 1 的话条件成立。
+此处调用Makefile 中的 words 函数来统计单词个数，words 函数格式如下：
+`$(words <text>)`
+
+很明显，MAKECMDGOALS 的单词个数是 1 个，所以条件不成立，mixed-targets 继续为0。
+综上所述，这些变量值如下：
+![alt](./images/Snipaste_2024-12-08_17-39-37.png)
+
+第 448 行如果变量 mixed-targets 为 1 的话条件成立，很明显，条件不成立。
+第 465 行如果变量 config-targets 为 1 的话条件成立，很明显，条件成立，执行这个分支。
+第 473 行，没有目标与之匹配，所以不执行。
+第 476 行，有目标与之匹配，**当输入“make xxx_defconfig”的时候就会匹配到%config 目标**，目标“%config”依赖于 scripts_basic、outputmakefile 和 FORCE。
+FORCE 在顶层 Makefile的 1610 行有如下定义：
+![alt](./images/Snipaste_2024-12-08_17-40-31.png)
+可以看出 FORCE 是没有规则和依赖的，所以每次都会重新生成 FORCE。当 FORCE 作为其他目标的依赖时，由于 FORCE 总是被更新过的，因此依赖所在的规则总是会执行的。
+
+依赖 scripts_basic 和 outputmakefile 在顶层 Makefile 中的内容如下：
+![alt](./images/Snipaste_2024-12-08_17-41-21.png)
+
+第 408 行，判断 KBUILD_SRC 是否为空，只有变量 KBUILD_SRC 不为空的时候outputmakefile 才有意义，经过我们前面的分析 KBUILD_SRC 为空，所以 outputmakefile 无效。
+只有 scripts_basic 是有效的。
+
+第 396~398 行是 scripts_basic 的规则，其对应的命令用到了变量 Q、MAKE 和 build，其中：
+```makefile
+Q=@或为空
+MAKE=make
+```
+变量 build 是在 scripts/Kbuild.include 文件中有定义，定义如下：
+![alt](./images/Snipaste_2024-12-08_17-42-22.png)
+
+可以看出 build=-f $(srctree)/scripts/Makefile.build obj，经过前面的分析可知，变量 srctree 为”.”，因此：
+`build=-f ./scripts/Makefile.build obj`
+
+scripts_basic 展开以后如下：
+![alt](./images/Snipaste_2024-12-08_17-43-32.png)
+
+**scripts_basic 会调用文件./scripts/Makefile.build**，这个我们后面在分析。
+
+接着回到示例代码中的%config 处，内容如下：
+![alt](./images/Snipaste_2024-12-08_17-44-41.png)
+
+将命令展开就是：
+`@make -f ./scripts/Makefile.build obj=scripts/kconfig xxx_defconfig`
+
+同样也跟文件./scripts/Makefile.build 有关，我们后面再分析此文件。
+使用如下命令配置 uboot，并观察其配置过程：
+`make mx6ull_14x14_ddr512_emmc_defconfig V=1`
+![alt](./images/Snipaste_2024-12-08_17-45-35.png)
+
+可以看出，我们的分析是正确的，接下来就要结合下面两行命令重点分析一下文件 scripts/Makefile.build。
+
+![alt](./images/Snipaste_2024-12-08_17-46-04.png)
+
+#### 31.3.14 Makefile.build 分析
+
+从上一小节可知，“make xxx_defconfig“配置 uboot 的时候如下两行命令会执行脚本scripts/Makefile.build：
+```makefile
+@make -f ./scripts/Makefile.build obj=scripts/basic
+@make -f ./scripts/Makefile.build obj=scripts/kconfig xxx_defconfig
+```
+依次来分析一下：
+
+1. **scripts_basic目标对应的命令**
+
+scripts_basic 目标对应的命令为：@make -f ./scripts/Makefile.build obj=scripts/basic。
+打开文件 scripts/Makefile.build，有如下代码：
+![alt](./images/Snipaste_2024-12-08_18-02-57.png)
+
+第 9 行定义了变量 prefix 值为 tpl。
+第 10 行定义了变量 src，这里用到了函数 patsubst，此行代码展开后为：
+`$(patsubst tpl/%,%, scripts/basic)`
+
+patsubst 是替换函数，格式如下：
+`$(patsubst <pattern>,<replacement>,<text>)`
+
+此函数用于在 text 中查找符合 pattern 的部分，如果匹配的话就用 replacement 替换掉。
+pattern 是可以包含通配符“%”，如果 replacement 中也包含通配符“%”，那么 replacement 中的这个“%”将是 pattern 中的那个“%”所代表的字符串。
+函数的返回值为替换后的字符串。
+因此，第 10 行就是在“scripts/basic”中查找符合“tpl/%”的部分，然后将“tpl/”取消掉，但是“scripts/basic”没有“tpl/”，所以 src= scripts/basic。
+
+第 11 行判断变量 obj 和 src 是否相等，相等的话条件成立，很明显，此处条件成立。
+第 12 行和第 9 行一样，只是这里处理的是“spl”，“scripts/basic”里面也没有“spl/”，所以src 继续为 scripts/basic。
+
+第 15 行因为变量 obj 和 src 相等，所以 prefix=.。
+
+继续分析 scripts/Makefile.build，有如下代码：
+![alt](./images/Snipaste_2024-12-08_19-34-00.png)
+
+将 kbuild-dir 展开后为：
+`$(if $(filter /%, scripts/basic), scripts/basic, ./scripts/basic)`
+
+因为没有以“/”为开头的单词，所以`$(filter /%, scripts/basic)`的结果为空，kbuilddir=./scripts/basic。
+
+将 kbuild-file 展开后为：
+`$(if $(wildcard ./scripts/basic/Kbuild), ./scripts/basic/Kbuild, ./scripts/basic/Makefile)`
+
+因为 scrpts/basic 目录中没有 Kbuild 这个文件，所以 kbuild-file= ./scripts/basic/Makefile。
+
+最后将 59 行展开，即：
+`include ./scripts/basic/Makefile`
+
+也就是读取 scripts/basic 下面的 Makefile 文件。
+
+继续分析 scripts/Makefile.build，如下代码:
+![alt](./images/Snipaste_2024-12-08_19-39-53.png)
+
+__build 是默认目标，因为命令“@make -f ./scripts/Makefile.build obj=scripts/basic”没有指定目标，所以会使用到默认目标：__build。
+
+在顶层 Makefile 中，KBUILD_BUILTIN 为 1，KBUILD_MODULES 为 0，因此展开后目标__build 为：
+```makefile
+__build:$(builtin-target) $(lib-target) $(extra-y)) $(subdir-ym) $(always)
+    @:
+```
+可以看出目标__build 有 5 个依赖：builtin-target、lib-target、extra-y、subdir-ym 和 always。
+这 5 个依赖的具体内容我们就不通过源码来分析了，直接在 scripts/Makefile.build 中输入图所示内容，将这 5 个变量的值打印出来：
+![alt](./images/Snipaste_2024-12-08_19-46-49.png)
+加上@表示不需要打印命令
+
+执行如下命令：
+`make mx6ull_14x14_ddr512_emmc_defconfig V=1`
+
+结果如图：
+![alt](./images/Snipaste_2024-12-08_19-48-14.png)
+
+从上图可以看出，只有 always 有效，因此__build 最终为：
+```makefile
+__build: scripts/basic/fixdep
+    @:
+```
+__build 依赖于 scripts/basic/fixdep，所以要先编译 scripts/basic/fixdep.c，生成 fixdep，前面已经读取了 scripts/basic/Makefile 文件。
+综上所述，scripts_basic 目标的作用就是编译出 scripts/basic/fixdep 这个软件。
+
+2. **%config 目标对应的命令**
+
+%config 目标对应的命令为：
+`@make -f ./scripts/Makefile.build obj=scripts/kconfigxxx_defconfig`
+各个变量值如下：
+```makefile
+src= scripts/kconfig
+kbuild-dir = ./scripts/kconfig
+kbuild-file = ./scripts/kconfig/Makefile
+include ./scripts/kconfig/Makefile
+```
+
+可以看出，Makefilke.build 会读取 scripts/kconfig/Makefile 中的内容，此文件有如下所示内容：
+![alt](./images/Snipaste_2024-12-08_19-54-34.png)
+
+目标%_defconfig 刚好和我们输入的 xxx_defconfig 匹配，所以会执行这条规则。
+依赖为`$(obj)/conf`，展开后就是 scripts/kconfig/conf。
+接下来就是检查并生成依赖 scripts/kconfig/conf。
+conf 是主机软件，到这里我们就打住，不要纠结 conf 是怎么编译出来的，否则就越陷越深，太绕了，像 conf 这种主机所使用的工具类软件我们一般不关心它是如何编译产生的。
+如果一定要看是 conf 是怎么生成的，可以输入如下命令重新配置 uboot，在重新配置 uboot 的过程中就会输出 conf 编译信息。
+```sh
+make distclean
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- mx6ull_14x14_ddr512_emmc_defconfig V=1
+```
+结果如图：
+![alt](./images/Snipaste_2024-12-08_19-56-28.png)
+
+得到 scripts/kconfig/conf 以后就要执行目标%_defconfig 的命令：
+`$(Q)$< $(silent) --defconfig=arch/$(SRCARCH)/configs/$@ $(Kconfig)`
+
+相关的变量值如下：
+```makefile
+silent=-s 或为空
+SRCARCH=..
+Kconfig=Kconfig
+```
+将其展开就是：
+`@ scripts/kconfig/conf --defconfig=arch/../configs/xxx_defconfig Kconfig`
+上述命令用到了 xxx_defconfig 文件，比如 mx6ull_alientek_emmc_defconfig。
+这里会将mx6ull_alientek_emmc_defconfig 中的配置输出到.config 文件中，最终生成 uboot 根目录下的.config 文件。
+
+这个就是命令 make xxx_defconfig 执行流程，总结一下如图:
+![alt](./images/Snipaste_2024-12-08_20-00-26.png)
+
+至此，make xxx_defconfig 就分析完了，接下来就要分析一下 u-boot.bin 是怎么生成的了。
+
+#### 31.3.15 make过程
+
+配置好 uboot 以后就可以直接 make 编译了，因为没有指明目标，所以会使用默认目标，主Makefile 中的默认目标如下：
+```makefile
+# That's our default target when none is given on the command line
+PHONY := _all
+_all:
+```
+目标_all 又依赖于 all，如下所示：
+```makefile
+# If building an external module we do not care about the all: rule
+# but instead _all depend on modules
+PHONY += all
+ifeq ($(KBUILD_EXTMOD),)
+_all: all
+else
+_all: modules
+endif
+```
+如果 KBUILD_EXTMOD 为空的话_all依赖于all。这里不编译模块，所以KBUILD_EXTMOD 肯定为空，_all 的依赖就是 all。
+在主 Makefile 中 all 目标规则如下：
+![alt](./images/Snipaste_2024-12-08_20-03-57.png)
+
+从 802 行可以看出，all 目标依赖$(ALL-y)，而在顶层 Makefile 中，ALL-y 如下:
+
+![alt](./images/Snipaste_2024-12-08_20-04-48.png)
+![alt](./images/Snipaste_2024-12-08_20-04-59.png)
+
+可以看出，ALL-y 包含 u-boot.srec、u-boot.bin、u-boot.sym、System.map、u-boot.cfg 和 binary_size_check 这几个文件。
+根据 uboot 的配置情况也可能包含其他的文件，比如：
+`ALL-$(CONFIG_ONENAND_U_BOOT) += u-boot-onenand.bin`
+
+CONFIG_ONENAND_U_BOOT 就是 uboot 中跟 ONENAND 配置有关的，如果我们使能了ONENAND，那么在.config 配置文件中就会有“CONFIG_ONENAND_U_BOOT=y”这一句。
+相当于 CONFIG_ONENAND_U_BOOT 是个变量，这个变量的值为“y”，所以展开以后就是：
+`ALL-y += u-boot-onenand.bin`
+
+这个就是.config 里面的配置参数的含义，这些参数其实都是变量，后面跟着变量值，会在顶层 Makefile 或者其他 Makefile 中调用这些变量。
+
+ALL-y 里面有个 u-boot.bin，这个就是我们最终需要的 uboot 二进制可执行文件，所作的所有工作就是为了它。
+在顶层 Makefile 中找到 u-boot.bin 目标对应的规则，如下所示：
+![alt](./images/Snipaste_2024-12-08_20-08-52.png)
+
+第 825 行判断 CONFIG_OF_SEPARATE 是否等于 y，如果相等，那条件就成立，在.config中搜索“CONFIG_OF_SEPARAT”，没有找到，说明条件不成立。
+
+第 832 行就是目标 u-boot.bin 的规则，目标 u-boot.bin 依赖于 u-boot-nodtb.bin，命令为`$(call if_changed,copy)` ，这里调用了if_changed，if_changed是 一个函数，这个函数在scripts/Kbuild.include 中有定义，而顶层 Makefile 中会包含 scripts/Kbuild.include 文件，这个前面已经说过了。
+`$(call <function-name>,<arg1>,<arg2>,...)`
+function-name 是一个变量，通常表示一个预先定义的函数。
+arg1, arg2, ... 是传递给函数的参数，多个参数用逗号分隔。
+
+if_changed 在 Kbuild.include 中的定义如下：
+![alt](./images/Snipaste_2024-12-08_20-15-10.png)
+![alt](./images/Snipaste_2024-12-08_20-15-20.png)
+
+第 227 行为 if_changed 的描述，根据描述，在一些先决条件比目标新的时候，或者命令行有改变的时候，if_changed 就会执行一些命令。
+
+第 257 行就是函数 if_changed，if_changed 函数引用的变量比较多，也比较绕，我们只需要知道它可以从 u-boot-nodtb.bin 生成 u-boot.bin 就行了。
+
+既然 u-boot.bin 依赖于 u-boot-nodtb.bin，那么肯定要先生成 u-boot-nodtb.bin 文件，顶层Makefile 中相关代码如下：
+![alt](./images/Snipaste_2024-12-08_20-19-29.png)
+
+目标 u-boot-nodtb.bin 又依赖于 u-boot，顶层 Makefile 中 u-boot 相关规则如下：
+![alt](./images/Snipaste_2024-12-08_20-19-53.png)
+
+目标 u-boot 依赖于 u-boot_init、u-boot-main 和 u-boot.lds，u-boot_init 和 u-boot-main 是两个变量，在顶层 Makefile 中有定义，值如下：
+```makefile
+u-boot-init := $(head-y)
+u-boot-main := $(libs-y)
+```
+`$(head-y)`跟 CPU 架构有关，我们使用的是 ARM 芯片，所以 head-y 在 arch/arm/Makefile 中被指定为：
+`head-y := arch/arm/cpu/$(CPU)/start.o`
+根据 31.3.12 小节的分析，我们知道 CPU=armv7，因此 head-y 展开以后就是：
+`head-y := arch/arm/cpu/armv7/start.o`
+因此：
+`u-boot-init= arch/arm/cpu/armv7/start.o`
+
+`$(libs-y)`在顶层 Makefile 中被定义为 uboot 所有子目录下 build-in.o 的集合，代码如下：
+![alt](./images/Snipaste_2024-12-08_20-23-32.png)
+![alt](./images/Snipaste_2024-12-08_20-24-58.png)
+
+从上面的代码可以看出，libs-y 都是 uboot 各子目录的集合，最后：
+`libs-y := $(patsubst %/, %/built-in.o, $(libs-y))`
+
+这里调用了函数 patsubst，将 libs-y 中的“/”替换为”/built-in.o”，比如“drivers/dma/”就变为了“drivers/dma/built-in.o”，相当于将 libs-y 改为所有子目录中 built-in.o 文件的集合。
+那么 uboot-main 就等于所有子目录中 built-in.o 的集合。
+
+这个规则就相当于将以 u-boot.lds 为链接脚本，将 arch/arm/cpu/armv7/start.o 和各个子目录下的 built-in.o 链接在一起生成 u-boot。
+
+u-boot.lds 的规则如下：
+![alt](./images/Snipaste_2024-12-08_20-27-07.png)
+
+接下来的重点就是各子目录下的 built-in.o 是怎么生成的，以 drivers/gpio/built-in.o 为例，在drivers/gpio/目录下会有个名为.built-in.o.cmd 的文件，此文件内容如下：
+![alt](./images/Snipaste_2024-12-08_20-27-43.png)
+
+从命令“cmd_drivers/gpio/built-in.o”可以看出，drivers/gpio/built-in.o 这个文件是使用 ld 命令由文件 drivers/gpio/mxc_gpio.o 生成而来的，mxc_gpio.o 是 mxc_gpio.c 编译生成的.o 文件，这个是 NXP 的 I.MX 系列的 GPIO 驱动文件。
+这里用到了 ld 的“-r”参数，参数含义如下：
+
+**-r –relocateable**: 产生可重定向的输出，比如，产生一个输出文件它可再次作为‘ld’的输入，这经常被叫做“部分链接”，当我们需要将几个小的.o 文件链接成为一个.o 文件的时候，需要使用此选项。
+
+最终将各个子目录中的 built-in.o 文件链接在一起就形成了 u-boot，使用如下命令编译 uboot就可以看到链接的过程：
+
+```sh
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- mx6ull_14x14_ddr512_emmc_defconfig V=1
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- V=1
+```
+编译的时候会有如图所示内容输出：
+![alt](./images/Snipaste_2024-12-08_20-29-58.png)
+
+整理一下有：
+![alt](./images/Snipaste_2024-12-08_20-30-30.png)
+![alt](./images/Snipaste_2024-12-08_20-30-45.png)
+
+可以看出最终是用 arm-linux-gnueabihf-ld.bfd 命令将 arch/arm/cpu/armv7/start.o 和其他众多的 built_in.o 链接在一起，形成 u-boot。
+
+目标 all 除了 u-boot.bin 以外还有其他的依赖，比如 u-boot.srec 、u-boot.sym 、System.map、u-boot.cfg 和 binary_size_check 等等，这些依赖的生成方法和 u-boot.bin 很类似，大家自行查看一下顶层 Makefile，我们就不详细的讲解了。
+
+总结一下make命令：
+
+![alt](./images/Snipaste_2024-12-08_20-32-12.png)
+
+图中就是“make”命令的执行流程，关于 uboot 的顶层 Makefile 就分析到这里。
+
+重点是“make xxx_defconfig”和“make”这两个命令的执行流程：
+
+**make xxx_defconfig**：用于配置 uboot，这个命令最主要的目的就是生成.config 文件。
+**make**：用于编译 uboot，这个命令的主要工作就是生成二进制的 u-boot.bin 文件和其他的一些与 uboot 有关的文件，比如 u-boot.imx 等等。
+
+关于 uboot 的顶层 Makefile 就分析到这里，有些内容我们没有详细、深入的去研究，因为我们的重点是使用 uboot，而不是 uboot 的研究者，我们要做的是缕清 uboot 的流程。
+至于更具体的实现，有兴趣的可以参考一下其他资料。
+
+## 第三十二章 U-Boot启动流程详解
+
