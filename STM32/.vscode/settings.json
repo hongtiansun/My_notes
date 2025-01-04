@@ -1,5 +1,6 @@
 {
     "files.associations": {
         "buzzer.h": "c"
-    }
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }

@@ -23,24 +23,14 @@
     	Delay_ms(10);
     }   
     //流水灯
-    while(1){
-    	GPIO_Write(GPIOA,~0x0001);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0002);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0004);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0008);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0010);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0020);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0040);
-    	Delay_ms(500);
-    	GPIO_Write(GPIOA,~0x0080);
-    	Delay_ms(500);
-    }
+	while(1){
+		int16_t index=0x0001;
+		int8_t i=0;
+		for (i=0;i<8;i++){
+			GPIO_Write(GPIOA,~(index<<i));
+			Delay_ms(500);
+		}
+	}
 ```
 
 ## GPIO输入初始化
