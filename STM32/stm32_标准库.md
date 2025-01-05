@@ -671,6 +671,527 @@ AB 相旋转编码器是一种常见的增量式编码器，用于测量旋转�
     每个源文件在编译时都是独立处理的，main.c 中定义的宏不会自动传递到 OLED.c 中。
     要使宏在多个文件中有效，可以在头文件中定义宏，并在需要使用宏的源文件中包含该头文件。
 
-    解答了OLED.c中重复定义问题 ，头文件只能声明变量，不能定义变量。
+    条件编译发生在预处理阶段。预处理是编译过程的第一个阶段，在这个阶段，编译器会处理所有的预处理指令，例如 #include、#define、#ifdef、#ifndef 等。
+    在main.c中没有定义宏 定义宏 包含了头文件，最后生成main.o 。
+    在time.c中main.c的宏不会起到作用，故而又定义了宏包含了头文件，链接阶段时，main.o与time.o链接在一起。
+    注意宏，条件编译只在预处理阶段起作用，达到main.o文件时，已经为二进制文件了。include 宏 只是声明作用，不起定义作用。故而可以重复包含，单个文件中不能重复包含，故而需要头文件守卫。
+    宏、条件编译等均为编译器解析动作，汇编中没有体现。
+
+    综上，.h文件只能含义声明语句，不能含有定义语句。
+
+变量定义
+`int a;`分配空间
+变量声明
+`extern int a;`声明a 不分配空间
+
+函数定义
+函数体；
+函数声明
+`int func (int,int);` 包含返回值类型 函数名 参数，只声明不分配空间。extern修饰表示外部函数。
+## 六、定时器系统
+
+### 定时器系统简介
+
+- TIM（Timer）定时器
+- 定时器可以对输入的时钟进行计数，并在计数值达到设定值时触发中断
+- 16位计数器、预分频器、自动重装寄存器的时基单元，在72MHz计数时钟下可以实现最大59.65s的定时
+- 不仅具备基本的定时中断功能，而且还包含内外时钟源选择、输入捕获、输出比较、编码器接口、主从触发模式等多种功能
+- 根据复杂度和应用场景分为了高级定时器、通用定时器、基本定时器三种类型
+
+定时器类型
+
+| 类型       | 编号                   | 总线 | 功能                                                                                                 |
+| ---------- | ---------------------- | ---- | ---------------------------------------------------------------------------------------------------- |
+| 高级定时器 | TIM1、TIM8             | APB2 | 拥有通用定时器全部功能，并额外具有重复计数器、死区生成、互补输出、刹车输入等功能                     |
+| 通用定时器 | TIM2、TIM3、TIM4、TIM5 | APB1 | 拥有基本定时器全部功能，并额外具有内外时钟源选择、输入捕获、输出比较、编码器接口、主从触发模式等功能 |
+| 基本定时器 | TIM6、TIM7             | APB1 | 拥有定时中断、主模式触发DAC的功能                                                                    |
+
+STM32C8T6 定时器资源有 TIM1\~4（一个高级三个通用）
+
+### 定时器结构
+
+#### 基本定时器
+
+![alt](./images/Snipaste_2025-01-05_13-56-34.png)
+
+PSC 预分频器： 16位，最大65536分频
+CNT 计数器： 16位，最大0\~65535,只能向上计数
+ARR ：16位，自动重装载
+
+产生的定时器中断，进入NVIC选择，进入CPU中断系统
+产生事件，可以出发其他外设工作
+
+主从触发模式：
+![alt](./images/Snipaste_2025-01-05_14-01-30.png)
+
+#### 通用寄存器
+
+时钟控制部分电路
+![alt](./images/Snipaste_2025-01-05_14-16-11.png)
+捕获比较中断电路
+![alt](./images/Snipaste_2025-01-05_14-18-42.png)
+
+主从触发模式：
+
+主模式：
+主模式（Master Mode）是指定时器作为主设备，控制其他定时器或外设的运行。
+主模式下，定时器可以生成触发信号，触发其他定时器或外设的操作。
+主模式通过配置定时器的主模式控制寄存器（TIMx_CR2）中的主模式选择位（MMS）来实现。常见的主模式包括：
+- 复位模式（Reset Mode）：当定时器的计数器达到更新事件时，生成复位信号。
+- 使能模式（Enable Mode）：当定时器的计数器使能时，生成使能信号。
+- 更新模式（Update Mode）：当定时器的计数器达到更新事件时，生成更新信号。
+- 比较脉冲模式（Compare Pulse Mode）：当定时器的输出比较事件发生时，生成比较脉冲信号。
+```C
+#include "stm32f10x.h"
+void TIM2_MasterMode_Config(void) {
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+    TIM_OCInitTypeDef TIM_OCInitStructure;
+
+    // 配置 TIM2 基本时间基
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+    TIM_TimeBaseStructure.TIM_Period = 999;
+    TIM_TimeBaseStructure.TIM_Prescaler = 71;
+    TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+    TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+    TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
+
+    // 配置 TIM2 为主模式
+    TIM_SelectOutputTrigger(TIM2, TIM_TRGOSource_Update);
+
+    // 启动 TIM2
+    TIM_Cmd(TIM2, ENABLE);
+}
+
+int main(void) {
+    TIM2_MasterMode_Config();
+    while (1) {
+        // 主循环
+    }
+}
+```
+从模式：
+从模式（Slave Mode）是指定时器作为从设备，受其他定时器或外设的控制。
+定时器在从模式下，可以根据外部触发信号进行同步操作。
+从模式通过配置定时器的从模式控制寄存器（TIMx_SMCR）中的从模式选择位（SMS）和触发选择位（TS）来实现。
+常见的从模式包括：
+- 关闭模式（Disabled Mode）：从模式关闭，定时器独立运行。
+- 复位模式（Reset Mode）：当触发信号到来时，复位定时器的计数器。
+- 门控模式（Gated Mode）：当触发信号有效时，定时器计数器运行；当触发信号无效时，定时器计数器停止。
+- 触发模式（Trigger Mode）：当触发信号到来时，启动定时器的计数器。
+- 外部时钟模式1（External Clock Mode 1）：使用外部触发信号作为定时器的时钟源。
+
+```C
+#include "stm32f10x.h"
+
+void TIM3_SlaveMode_Config(void) {
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+
+    // 配置 TIM3 基本时间基
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+    TIM_TimeBaseStructure.TIM_Period = 999;
+    TIM_TimeBaseStructure.TIM_Prescaler = 71;
+    TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+    TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+    TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
+
+    // 配置 TIM3 为从模式，触发源为 TIM2
+    TIM_SelectSlaveMode(TIM3, TIM_SlaveMode_Reset);
+    TIM_SelectInputTrigger(TIM3, TIM_TS_ITR1); // ITR1 对应 TIM2
+
+    // 启动 TIM3
+    TIM_Cmd(TIM3, ENABLE);
+}
+
+int main(void) {
+    TIM2_MasterMode_Config();
+    TIM3_SlaveMode_Config();
+    while (1) {
+        // 主循环
+    }
+}
+```
+主从触发：自己的触发事件触发自己复位，实现自动复位。
+
+内部触发连接：
+![alt](./images/Snipaste_2025-01-05_14-32-41.png)
+
+#### 高级定时器
+
+框图：
+![alt](./images/Snipaste_2025-01-05_14-39-23.png)
+
+### 定时器中断
+
+![alt](./images/Snipaste_2025-01-05_14-42-10.png)
+
+### 预分频器时序
+
+![alt](./images/Snipaste_2025-01-05_14-49-19.png)
+
+计数器计数频率： CK_CNT = CK_PSC / (PSC + 1) ;
+
+### 计数器时序
+
+![alt](./images/Snipaste_2025-01-05_14-52-45.png)
+
+计数器溢出频率：CK_CNT_OV = CK_CNT / (ARR +1) = CK_PSC / (PSC + 1) / (ARR + 1);
+
+### 计数器ARR 无预装寄存器时序
+
+![alt](./images/Snipaste_2025-01-05_14-55-40.png)
+
+写入新值后，立即起作用。没有影子寄存器
+
+### 计数器ARR 有预装寄存器时序
+
+![alt](./images/Snipaste_2025-01-05_14-57-23.png)
+
+写入新值后，下一个时期才会起作用。
+主要目的是为了保证时序的同步
+
+### RCC 时钟数
+
+main 函数在执行前，会运行SystemInit函数，主要作用是配置时钟树。
+
+时钟信号产生电路
+![alt](./images/Snipaste_2025-01-05_15-06-23.png)
+
+CSS 时钟安全系统
+8MHZ外部晶振 经锁相环倍频后得到721MHZ系统时钟，分配给AHB、APB1、APB2总线
+
+当外部时钟损坏后，系统使用内部8MHZ的时钟弥补，在感官上，时钟慢了近十倍
+
+时钟信号分配：
+![alt](./images/Snipaste_2025-01-05_15-14-06.png)
+
+APB1最大36MHZ APB2最大72MHZ
+TIM固定72MHZ
+
+## 七、定时器使用
+
+### 定时器中断
+
+![alt](./images/Snipaste_2025-01-05_15-18-29.png)
+
+配置步骤：
+- 配置RCC使能
+- 配置内部时钟模式
+- 配置时基单元
+- 配置中断输出控制
+- 配置NVIC 定时器中断
+- 运行控制
+
+配置函数：
+```C
+void TIM_DeInit(TIM_TypeDef* TIMx); //默认设置
+void TIM_TimeBaseInit(TIM_TypeDef* TIMx, TIM_TimeBaseInitTypeDef* TIM_TimeBaseInitStruct);//时基单元初始化
+void TIM_Cmd(TIM_TypeDef* TIMx, FunctionalState NewState);//使能控制
+void TIM_TimeBaseStructInit(TIM_TimeBaseInitTypeDef* TIM_TimeBaseInitStruct);//结构体变量赋给默认值
+
+void TIM_InternalClockConfig(TIM_TypeDef* TIMx);//内部时钟
+void TIM_ITRxExternalClockConfig(TIM_TypeDef* TIMx, uint16_t TIM_InputTriggerSource);//选择ITR定时器
+void TIM_TIxExternalClockConfig(TIM_TypeDef* TIMx, uint16_t TIM_TIxExternalCLKSource,
+                                uint16_t TIM_ICPolarity, uint16_t ICFilter); //选择捕获通道时钟
+void TIM_ETRClockMode1Config(TIM_TypeDef* TIMx, uint16_t TIM_ExtTRGPrescaler, uint16_t TIM_ExtTRGPolarity,
+                             uint16_t ExtTRGFilter);//选择外部时钟1 输入时钟
+void TIM_ETRClockMode2Config(TIM_TypeDef* TIMx, uint16_t TIM_ExtTRGPrescaler, 
+                             uint16_t TIM_ExtTRGPolarity, uint16_t ExtTRGFilter);//选择外部时钟2 输入时钟
+void TIM_ETRConfig(TIM_TypeDef* TIMx, uint16_t TIM_ExtTRGPrescaler, uint16_t TIM_ExtTRGPolarity,
+                             uint16_t ExtTRGFilter); //单独配置ETR引脚预分频器极性滤波器等
+
+void TIM_PrescalerConfig(TIM_TypeDef* TIMx, uint16_t Prescaler, uint16_t TIM_PSCReloadMode);//设置实际单元分频值
+void TIM_CounterModeConfig(TIM_TypeDef* TIMx, uint16_t TIM_CounterMode);//设置计数模式
+void TIM_ARRPreloadConfig(TIM_TypeDef* TIMx, FunctionalState NewState);//设置ARR模式 有预装 无预装
+void TIM_SetCounter(TIM_TypeDef* TIMx, uint16_t Counter);//设置计数器值
+void TIM_SetAutoreload(TIM_TypeDef* TIMx, uint16_t Autoreload);//设置ARR值
+uint16_t TIM_GetCounter(TIM_TypeDef* TIMx);//获取计数器值
+uint16_t TIM_GetPrescaler(TIM_TypeDef* TIMx);//获取预分频器值
+FlagStatus TIM_GetFlagStatus(TIM_TypeDef* TIMx, uint16_t TIM_FLAG);//获取标志位
+void TIM_ClearFlag(TIM_TypeDef* TIMx, uint16_t TIM_FLAG);//清楚标志位
+ITStatus TIM_GetITStatus(TIM_TypeDef* TIMx, uint16_t TIM_IT);//中断中获取
+void TIM_ClearITPendingBit(TIM_TypeDef* TIMx, uint16_t TIM_IT);//中断中清除
+```
+TIM_IT 中断标志位：
+TIM_IT_Update: 定时器更新中断源。当定时器计数器溢出或更新事件发生时触发。
+TIM_IT_CC1: 定时器捕获比较1中断源。当捕获/比较寄存器1匹配计数器值时触发。
+TIM_IT_CC2: 定时器捕获比较2中断源。当捕获/比较寄存器2匹配计数器值时触发。
+TIM_IT_CC3: 定时器捕获比较3中断源。当捕获/比较寄存器3匹配计数器值时触发。
+TIM_IT_CC4: 定时器捕获比较4中断源。当捕获/比较寄存器4匹配计数器值时触发。
+TIM_IT_COM: 定时器换向中断源。用于高级控制定时器的换向事件。
+TIM_IT_Trigger: 定时器触发中断源。当触发输入事件发生时触发。
+TIM_IT_Break: 定时器断裂中断源。用于高级控制定时器的紧急停止事件。
+
+时基单元结构体：
+```C
+typedef struct
+{
+  uint16_t TIM_Prescaler; //预分频器值
+  uint16_t TIM_CounterMode;//计数模式 
+  uint16_t TIM_Period; //ARR 自动重装载 
+  uint16_t TIM_ClockDivision; //采样频率分频 
+  uint8_t TIM_RepetitionCounter;  //重复计数器值（高级计数器才有）
+} TIM_TimeBaseInitTypeDef;    
+```
+
+补充：滤波器
+
+    滤波原理：
+    固定时钟信号F采样，值相同，则稳定输出
+    值并不相同，输出为0或者保持原样输出
+
+    采样频率越高，采样点越多，滤波效果越好，对应的延迟也越大
+    采样频率的来源：时钟分频 TIM_ClockDivision决定
+
+static 修饰作用：
+
+修饰局部变量： 内存申请在静态区，出函数后不会被销毁。
+作用域不变，生命周期被延长
+
+修饰全局变量： 全局变量本身有外部链接属性，可用extern 声明外部文件变量。static修饰以后，成为文件内部属性，不可被外联。
+生命周期不变，作用域改变。
+
+修饰函数： 同全局变量
+
+补充： 刚一上电可能立即进入中断
+
+    TIM_TimeBaseInit 函数中，会自动生成一个更新事件。
+    来重装预分频器，更新事件与更新中断，同时产生。
+    生成更新事件的同时，中断标志位置位1，因而复位时会立即进入中断，
+    初始化时，需要清楚标志位。
+    TIM_ClearFlag(TIM,TIM_FLAG_Update);
+
+### 输出比较功能
+
+#### 输出比较简介
+
+OC（Output Compare）输出比较
+输出比较可以通过比较CNT与CCR寄存器值的关系，来对输出电平进行置1、置0或翻转的操作，用于输出一定频率和占空比的PWM波形(输出比较)
+每个高级定时器和通用定时器都拥有4个输出比较通道 (四个通道)
+高级定时器的前3个通道额外拥有死区生成和互补输出的功能(用于驱动三相电机)
+
+会对比CNT 与 CCR的值大小，通过大小比较输出0/1
+
+#### PWM波形
+
+PWM（Pulse Width Modulation）脉冲宽度调制
+在具有惯性的系统中，可以通过对一系列脉冲的宽度进行调制，来等效地获得所需要的模拟参量，常应用于电机控速等领域
+PWM参数：
+- 周期 = TS
+- 频率 = 1 / TS  频率越大，性能越平稳，功耗也越大。
+- 占空比 = TON / TS 高电平占比，表示等效的模拟量
+- 分辨率 = 占空比变化步距 表示占空比变化（调节步频）
+
+图解：
+![alt](./images/Snipaste_2025-01-05_17-21-19.png)
+
+#### 输出比较输出PWM
+
+输出比较通道
+![alt](./images/Snipaste_2025-01-05_17-25-54.png)
+
+输出比较模式
+![alt](./images/Snipaste_2025-01-05_17-27-06.png)
+
+PWM结构
+![alt](./images/Snipaste_2025-01-05_17-30-37.png)
+
+f频率可调，占空比可调
+
+#### PWM参数计算
+
+![alt](./images/Snipaste_2025-01-05_17-37-07.png)
+PWM频率: Freq = CK_PSC / (PSC + 1) / (ARR + 1) (时钟频率)
+PWM占空比： Duty = CCR / (ARR + 1) 
+PWM分辨率： Reso = 1 / (ARR + 1) 
+
+补充一下高级定时器输出比较：
+
+![alt](./images/Snipaste_2025-01-05_17-39-11.png)
+
+#### 舵机
+
+舵机是一种根据输入PWM信号占空比来控制输出角度的装置
+输入PWM信号要求：周期为20ms，高电平宽度为0.5ms~2.5ms
+
+![alt](./images/Snipaste_2025-01-05_17-42-14.png)
+
+硬件电路：
+![alt](./images/Snipaste_2025-01-05_18-54-00.png)
+
+#### 直流电机
+
+直流电机是一种将电能转换为机械能的装置，有两个电极，当电极正接时，电机正转，当电极反接时，电机反转
+直流电机属于大功率器件，GPIO口无法直接驱动，需要配合电机驱动电路来操作
+TB6612是一款双路H桥型的直流电机驱动芯片，可以驱动两个直流电机并且控制其转速和方向
+
+![alt](./images/Snipaste_2025-01-05_18-56-51.png)
+
+硬件驱动电路：
+
+![alt](./images/Snipaste_2025-01-05_19-01-15.png)
+
+#### PWM 相关函数
+
+```C
+void TIM_ForcedOC1Config(TIM_TypeDef* TIMx, uint16_t TIM_ForcedAction);//强制输出0/1
+void TIM_ForcedOC2Config(TIM_TypeDef* TIMx, uint16_t TIM_ForcedAction);
+void TIM_ForcedOC3Config(TIM_TypeDef* TIMx, uint16_t TIM_ForcedAction);
+void TIM_ForcedOC4Config(TIM_TypeDef* TIMx, uint16_t TIM_ForcedAction);
+
+void TIM_OC1PreloadConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCPreload);//设置CCR寄存器 带有影子寄存器
+void TIM_OC2PreloadConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCPreload);
+void TIM_OC3PreloadConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCPreload);
+void TIM_OC4PreloadConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCPreload);
+
+void TIM_OC1FastConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCFast); //快速配置使能
+void TIM_OC2FastConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCFast);
+void TIM_OC3FastConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCFast);
+void TIM_OC4FastConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCFast);
+
+void TIM_ClearOC1Ref(TIM_TypeDef* TIMx, uint16_t TIM_OCClear);//清楚REF信号
+void TIM_ClearOC2Ref(TIM_TypeDef* TIMx, uint16_t TIM_OCClear);
+void TIM_ClearOC3Ref(TIM_TypeDef* TIMx, uint16_t TIM_OCClear);
+void TIM_ClearOC4Ref(TIM_TypeDef* TIMx, uint16_t TIM_OCClear);
+
+void TIM_OC1Init(TIM_TypeDef* TIMx, TIM_OCInitTypeDef* TIM_OCInitStruct); //输出比较初始化
+void TIM_OC2Init(TIM_TypeDef* TIMx, TIM_OCInitTypeDef* TIM_OCInitStruct);
+void TIM_OC3Init(TIM_TypeDef* TIMx, TIM_OCInitTypeDef* TIM_OCInitStruct);
+void TIM_OC4Init(TIM_TypeDef* TIMx, TIM_OCInitTypeDef* TIM_OCInitStruct);
+
+void TIM_OCStructInit(TIM_OCInitTypeDef* TIM_OCInitStruct); //结构体默认初始化
+
+void TIM_OC1PolarityConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCPolarity); //配置输出有效极性
+void TIM_OC1NPolarityConfig(TIM_TypeDef* TIMx, uint16_t TIM_OCNPolarity); //互补通道设置
+
+void TIM_CCxCmd(TIM_TypeDef* TIMx, uint16_t TIM_Channel, uint16_t TIM_CCx);// 修改使能参数
+void TIM_CCxNCmd(TIM_TypeDef* TIMx, uint16_t TIM_Channel, uint16_t TIM_CCxN);
+
+void TIM_SelectOCxM(TIM_TypeDef* TIMx, uint16_t TIM_Channel, uint16_t TIM_OCMode);//修改输出比较模式
+
+void TIM_SetCompare1(TIM_TypeDef* TIMx, uint16_t Compare1);//设置占空比
+
+```
+
+输出比较结构体
+```C
+typedef struct
+{
+  uint16_t TIM_OCMode;        /*!< Specifies the TIM mode.
+                                   This parameter can be a value of @ref TIM_Output_Compare_and_PWM_modes */
+
+  uint16_t TIM_OutputState;   /*!< Specifies the TIM Output Compare state.
+                                   This parameter can be a value of @ref TIM_Output_Compare_state */
+
+  uint16_t TIM_OutputNState;  /*!< Specifies the TIM complementary Output Compare state.
+                                   This parameter can be a value of @ref TIM_Output_Compare_N_state
+                                   @note This parameter is valid only for TIM1 and TIM8. */
+
+  uint16_t TIM_Pulse;         /*!< Specifies the pulse value to be loaded into the Capture Compare Register. 
+                                   This parameter can be a number between 0x0000 and 0xFFFF */
+
+  uint16_t TIM_OCPolarity;    /*!< Specifies the output polarity.
+                                   This parameter can be a value of @ref TIM_Output_Compare_Polarity */
+
+  uint16_t TIM_OCNPolarity;   /*!< Specifies the complementary output polarity.
+                                   This parameter can be a value of @ref TIM_Output_Compare_N_Polarity
+                                   @note This parameter is valid only for TIM1 and TIM8. */
+
+  uint16_t TIM_OCIdleState;   /*!< Specifies the TIM Output Compare pin state during Idle state.
+                                   This parameter can be a value of @ref TIM_Output_Compare_Idle_State
+                                   @note This parameter is valid only for TIM1 and TIM8. */
+
+  uint16_t TIM_OCNIdleState;  /*!< Specifies the TIM Output Compare pin state during Idle state.
+                                   This parameter can be a value of @ref TIM_Output_Compare_N_Idle_State
+                                   @note This parameter is valid only for TIM1 and TIM8. */
+} TIM_OCInitTypeDef;   
+```
+
+引脚复用：
+![alt](./images/Snipaste_2025-01-05_19-13-08.png)
+倘若PA0已经占用，可以重映射到替他位置。
+![alt](./images/Snipaste_2025-01-05_19-16-16.png)
+重映射需要利用AFIO
+重映射：
+```C
+//配置引脚重映射
+RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO,ENABLE); //开启AFIO
+GPIO_PinRemapConfig(GPIO_PartialRemap1_TIM2,ENABLE);//TIM2CH1复用功能开启 复用到A15
+GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable,ENABLE);//关闭A15原本的ATAG调试功能使之成为普通io
+```
+函数描述：
+```C
+/**
+  * @brief  Changes the mapping of the specified pin.
+  * @param  GPIO_Remap: selects the pin to remap.
+  *   This parameter can be one of the following values:
+  *     @arg GPIO_Remap_SPI1             : SPI1 Alternate Function mapping
+  *     @arg GPIO_Remap_I2C1             : I2C1 Alternate Function mapping
+  *     @arg GPIO_Remap_USART1           : USART1 Alternate Function mapping
+  *     @arg GPIO_Remap_USART2           : USART2 Alternate Function mapping
+  *     @arg GPIO_PartialRemap_USART3    : USART3 Partial Alternate Function mapping
+  *     @arg GPIO_FullRemap_USART3       : USART3 Full Alternate Function mapping
+  *     @arg GPIO_PartialRemap_TIM1      : TIM1 Partial Alternate Function mapping
+  *     @arg GPIO_FullRemap_TIM1         : TIM1 Full Alternate Function mapping
+  *     @arg GPIO_PartialRemap1_TIM2     : TIM2 Partial1 Alternate Function mapping
+  *     @arg GPIO_PartialRemap2_TIM2     : TIM2 Partial2 Alternate Function mapping
+  *     @arg GPIO_FullRemap_TIM2         : TIM2 Full Alternate Function mapping
+  *     @arg GPIO_PartialRemap_TIM3      : TIM3 Partial Alternate Function mapping
+  *     @arg GPIO_FullRemap_TIM3         : TIM3 Full Alternate Function mapping
+  *     @arg GPIO_Remap_TIM4             : TIM4 Alternate Function mapping
+  *     @arg GPIO_Remap1_CAN1            : CAN1 Alternate Function mapping
+  *     @arg GPIO_Remap2_CAN1            : CAN1 Alternate Function mapping
+  *     @arg GPIO_Remap_PD01             : PD01 Alternate Function mapping
+  *     @arg GPIO_Remap_TIM5CH4_LSI      : LSI connected to TIM5 Channel4 input capture for calibration
+  *     @arg GPIO_Remap_ADC1_ETRGINJ     : ADC1 External Trigger Injected Conversion remapping
+  *     @arg GPIO_Remap_ADC1_ETRGREG     : ADC1 External Trigger Regular Conversion remapping
+  *     @arg GPIO_Remap_ADC2_ETRGINJ     : ADC2 External Trigger Injected Conversion remapping
+  *     @arg GPIO_Remap_ADC2_ETRGREG     : ADC2 External Trigger Regular Conversion remapping
+  *     @arg GPIO_Remap_ETH              : Ethernet remapping (only for Connectivity line devices)
+  *     @arg GPIO_Remap_CAN2             : CAN2 remapping (only for Connectivity line devices)
+  *     @arg GPIO_Remap_SWJ_NoJTRST      : Full SWJ Enabled (JTAG-DP + SW-DP) but without JTRST
+  *     @arg GPIO_Remap_SWJ_JTAGDisable  : JTAG-DP Disabled and SW-DP Enabled
+  *     @arg GPIO_Remap_SWJ_Disable      : Full SWJ Disabled (JTAG-DP + SW-DP)
+  *     @arg GPIO_Remap_SPI3             : SPI3/I2S3 Alternate Function mapping (only for Connectivity line devices)
+  *                                        When the SPI3/I2S3 is remapped using this function, the SWJ is configured
+  *                                        to Full SWJ Enabled (JTAG-DP + SW-DP) but without JTRST.   
+  *     @arg GPIO_Remap_TIM2ITR1_PTP_SOF : Ethernet PTP output or USB OTG SOF (Start of Frame) connected
+  *                                        to TIM2 Internal Trigger 1 for calibration (only for Connectivity line devices)
+  *                                        If the GPIO_Remap_TIM2ITR1_PTP_SOF is enabled the TIM2 ITR1 is connected to 
+  *                                        Ethernet PTP output. When Reset TIM2 ITR1 is connected to USB OTG SOF output.    
+  *     @arg GPIO_Remap_PTP_PPS          : Ethernet MAC PPS_PTS output on PB05 (only for Connectivity line devices)
+  *     @arg GPIO_Remap_TIM15            : TIM15 Alternate Function mapping (only for Value line devices)
+  *     @arg GPIO_Remap_TIM16            : TIM16 Alternate Function mapping (only for Value line devices)
+  *     @arg GPIO_Remap_TIM17            : TIM17 Alternate Function mapping (only for Value line devices)
+  *     @arg GPIO_Remap_CEC              : CEC Alternate Function mapping (only for Value line devices)
+  *     @arg GPIO_Remap_TIM1_DMA         : TIM1 DMA requests mapping (only for Value line devices)
+  *     @arg GPIO_Remap_TIM9             : TIM9 Alternate Function mapping (only for XL-density devices)
+  *     @arg GPIO_Remap_TIM10            : TIM10 Alternate Function mapping (only for XL-density devices)
+  *     @arg GPIO_Remap_TIM11            : TIM11 Alternate Function mapping (only for XL-density devices)
+  *     @arg GPIO_Remap_TIM13            : TIM13 Alternate Function mapping (only for High density Value line and XL-density devices)
+  *     @arg GPIO_Remap_TIM14            : TIM14 Alternate Function mapping (only for High density Value line and XL-density devices)
+  *     @arg GPIO_Remap_FSMC_NADV        : FSMC_NADV Alternate Function mapping (only for High density Value line and XL-density devices)
+  *     @arg GPIO_Remap_TIM67_DAC_DMA    : TIM6/TIM7 and DAC DMA requests remapping (only for High density Value line devices)
+  *     @arg GPIO_Remap_TIM12            : TIM12 Alternate Function mapping (only for High density Value line devices)
+  *     @arg GPIO_Remap_MISC             : Miscellaneous Remap (DMA2 Channel5 Position and DAC Trigger remapping, 
+  *                                        only for High density Value line devices)     
+  * @param  NewState: new state of the port pin remapping.
+  *   This parameter can be: ENABLE or DISABLE.
+  * @retval None
+  */
+ ```
+
+输出GPIO时，由定时器输出，故而配置成AF_PP功能。复用推挽输出
+
+示例：
+1KHZPWM波，占空比为50% 分辨率为1%
+1KHZ = 72 000 000 / (PSC + 1) / (ARR + 1)
+50% = CRR / (ARR + 1)
+1% = 1 / (ARR + 1)
+
+得PSC = 720
+CRR = 50
+ARR = 99
 
 
+
+### 输入比较
