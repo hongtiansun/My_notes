@@ -1192,6 +1192,1180 @@ GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable,ENABLE);//关闭A15原本的ATAG�
 CRR = 50
 ARR = 99
 
+### 输入捕获
+
+#### 输入捕获功能简介
+
+IC（Input Capture）输入捕获
+输入捕获模式下，当通道输入引脚出现指定电平跳变时，当前CNT的值将被锁存到CCR中，可用于测量PWM波形的频率、占空比、脉冲间隔、电平持续时间等参数
+每个高级定时器和通用定时器都拥有4个输入捕获通道
+可配置为**PWMI模式**，同时测量频率和占空比
+可配合**主从触发模式**，实现硬件全自动测量
+
+对于同一个定时器，输入捕获与输出比较只能使用一个(使用同一个CRR寄存器)
+
+#### 频率测量
+
+![alt](./images/Snipaste_2025-01-18_14-55-47.png)
+
+测频法：在闸门时间T内，对上升沿计次，得到N，则频率$𝑓_𝑥=𝑁 / 𝑇$. 更加稳定适合高频信号。
+
+测周法：在两个上升沿内，用标准频率fc计次，则频率为$f_x = f_c / N$. 适合低频，更新快
+
+中界频率：测频法与测周法误差相等的频率点 $ 𝑓_𝑚= \sqrt{𝑓_𝑐  / 𝑇}$ （N值相等）
+
+#### 输入捕获部分电路设计
+
+![alt](./images/Snipaste_2025-01-18_19-32-43.png)
+
+![alt](./images/Snipaste_2025-01-18_19-36-25.png)
+
+![alt](./images/Snipaste_2025-01-18_19-40-42.png)
+
+滤波器采样频率越低，采样个数越多 其滤波效果越好
+
+#### 主从触发模式
+
+在 STM32 微控制器中，定时器可以配置为主模式或从模式，以实现复杂的定时和同步功能。
+
+主模式是指定时器作为主设备，生成触发信号来控制其他定时器或外设的运行。
+在主模式下，定时器可以通过特定事件（如更新事件、比较事件等）生成触发输出信号（TRGO），这些信号可以用于启动或同步其他定时器或外设。
+
+配置主模式:
+主模式通过配置定时器的主模式控制寄存器（TIMx_CR2）中的主模式选择位（MMS）来实现。常见的主模式包括：
+复位模式（Reset Mode）：当定时器的计数器达到更新事件时，生成复位信号。
+使能模式（Enable Mode）：当定时器的计数器使能时，生成使能信号。
+更新模式（Update Mode）：当定时器的计数器达到更新事件时，生成更新信号。
+比较脉冲模式（Compare Pulse Mode）：当定时器的输出比较事件发生时，生成比较脉冲信号。
+
+从模式是指定时器作为从设备，受其他定时器或外设的控制。
+在从模式下，定时器可以根据外部触发信号进行同步操作，如启动、复位或作为时钟源。
+
+配置从模式：
+从模式通过配置定时器的从模式控制寄存器（TIMx_SMCR）中的从模式选择位（SMS）和触发选择位（TS）来实现。常见的从模式包括：
+关闭模式（Disabled Mode）：从模式关闭，定时器独立运行。
+复位模式（Reset Mode）：当触发信号到来时，复位定时器的计数器。
+门控模式（Gated Mode）：当触发信号有效时，定时器计数器运行；当触发信号无效时，定时器计数器停止。
+触发模式（Trigger Mode）：当触发信号到来时，启动定时器的计数器。
+外部时钟模式1（External Clock Mode 1）：使用外部触发信号作为定时器的时钟源。
+
+TRGO 与 TRGI信号：
+
+TRGO 是定时器的触发输出信号。定时器可以在特定事件发生时生成 TRGO 信号，用于触发其他定时器或外设。
+TRGO 信号可以由多种事件生成，如更新事件、比较事件等。
+配置 TRGO
+TRGO 的配置通过定时器的主模式控制寄存器（TIMx_CR2）中的主模式选择位（MMS）来实现。
+常见的 TRGO 配置选项包括：
+复位模式（Reset Mode）：当定时器的计数器达到更新事件时，生成复位信号。
+使能模式（Enable Mode）：当定时器的计数器使能时，生成使能信号。
+更新模式（Update Mode）：当定时器的计数器达到更新事件时，生成更新信号。
+比较脉冲模式（Compare Pulse Mode）：当定时器的输出比较事件发生时，生成比较脉冲信号。
+比较 - OC1REF 模式（Compare - OC1REF Mode）：当输出比较 1 事件发生时，生成 OC1REF 信号。
+比较 - OC2REF 模式（Compare - OC2REF Mode）：当输出比较 2 事件发生时，生成 OC2REF 信号。
+比较 - OC3REF 模式（Compare - OC3REF Mode）：当输出比较 3 事件发生时，生成 OC3REF 信号。
+比较 - OC4REF 模式（Compare - OC4REF Mode）：当输出比较 4 事件发生时，生成 OC4REF 信号。
+
+TRGI 是定时器的触发输入信号。
+定时器可以通过 TRGI 信号接收来自其他定时器或外设的触发信号，从而实现同步操作，如启动、复位或作为时钟源。
+配置 TRGI
+TRGI 的配置通过定时器的从模式控制寄存器（TIMx_SMCR）中的触发选择位（TS）来实现。
+常见的 TRGI 配置选项包括：
+内部触发 0（ITR0）：来自其他定时器的内部触发信号 0。
+内部触发 1（ITR1）：来自其他定时器的内部触发信号 1。
+内部触发 2（ITR2）：来自其他定时器的内部触发信号 2。
+内部触发 3（ITR3）：来自其他定时器的内部触发信号 3。
+TI1 边沿检测（TI1 Edge Detector）：TI1 输入的边沿检测信号。
+过滤后的 TI1（Filtered TI1）：过滤后的 TI1 输入信号。
+过滤后的 TI2（Filtered TI2）：过滤后的 TI2 输入信号。
+外部触发输入（ETRF）：外部触发输入信号。
+
+![alt](./images/Snipaste_2025-01-18_19-46-51.png)
+
+#### 输入捕获的基本结构
+
+![alt](./images/Snipaste_2025-01-18_20-00-51.png)
+
+#### PWMI基本结构
+
+![alt](./images/Snipaste_2025-01-18_20-04-24.png)
+
+#### 配置函数
+
+基本配置过程
+
+1. RCC开启GPIO TIM时钟
+2. GPIO 引脚初始化
+3. 配置时基单元TIM
+4. 配置输入捕获单元
+5. 选择从模式触发源
+6. 选择从模式的触发作用
+7. 开启定时器
+
+基本配置函数：
+```C
+void TIM_ICInit(TIM_TypeDef* TIMx, TIM_ICInitTypeDef* TIM_ICInitStruct); //初始化函数 四个通道共用一个
+void TIM_PWMIConfig(TIM_TypeDef* TIMx, TIM_ICInitTypeDef* TIM_ICInitStruct); //配置输入捕获单元 快速配置为PWMI模式
+void TIM_ICStructInit(TIM_ICInitTypeDef* TIM_ICInitStruct); //IC结构体
+void TIM_SelectInputTrigger(TIM_TypeDef* TIMx, uint16_t TIM_InputTriggerSource); //配置输入TRGI触发源 从
+void TIM_SelectOutputTrigger(TIM_TypeDef* TIMx, uint16_t TIM_TRGOSource); //配置输出TRGO触发源 主
+void TIM_SelectSlaveMode(TIM_TypeDef* TIMx, uint16_t TIM_SlaveMode); //从模式选择
+
+void TIM_SetIC1Prescaler(TIM_TypeDef* TIMx, uint16_t TIM_ICPSC);//配置输入通道分频器
+void TIM_SetIC2Prescaler(TIM_TypeDef* TIMx, uint16_t TIM_ICPSC);
+void TIM_SetIC3Prescaler(TIM_TypeDef* TIMx, uint16_t TIM_ICPSC);
+void TIM_SetIC4Prescaler(TIM_TypeDef* TIMx, uint16_t TIM_ICPSC);
+
+uint16_t TIM_GetCapture1(TIM_TypeDef* TIMx);//获取捕获CRR值
+uint16_t TIM_GetCapture2(TIM_TypeDef* TIMx);
+uint16_t TIM_GetCapture3(TIM_TypeDef* TIMx);
+uint16_t TIM_GetCapture4(TIM_TypeDef* TIMx);
+
+typedef struct
+{
+
+  uint16_t TIM_Channel;      /*!< Specifies the TIM channel.
+                                  This parameter can be a value of @ref TIM_Channel */
+
+  uint16_t TIM_ICPolarity;   /*!< Specifies the active edge of the input signal.
+                                  This parameter can be a value of @ref TIM_Input_Capture_Polarity */
+
+  uint16_t TIM_ICSelection;  /*!< Specifies the input.
+                                  This parameter can be a value of @ref TIM_Input_Capture_Selection */
+
+  uint16_t TIM_ICPrescaler;  /*!< Specifies the Input Capture Prescaler.
+                                  This parameter can be a value of @ref TIM_Input_Capture_Prescaler */
+
+  uint16_t TIM_ICFilter;     /*!< Specifies the input capture filter.
+                                  This parameter can be a number between 0x0 and 0xF */
+} TIM_ICInitTypeDef;
+```
+
+注意CRR 输入只能SetCapture 输出只能GetCapture
+
+补充：
+PWMI模式配置
+1. 直接对通道2初始化，交叉输入，下降沿触发
+2. TIM_PWMIConfig 配置 STC官方设置的配置，自动配置相反的设置(只支持通道1和通道2)
+
+测频性能：
+假设标准频率（TIM时钟设置）为1MHz
+最低：1M/65535 = 15Hz
+最高：标准频率 1M/1 = 1M
+
+测周法只适合低频信号
+
+### 旋转编码器接口
+
+#### 简介
+Encoder Interface 编码器接口
+编码器接口可接收增量（正交）编码器的信号，根据编码器旋转产生的正交信号脉冲，自动控制CNT自增或自减，从而指示编码器的位置、旋转方向和旋转速度
+每个高级定时器和通用定时器都拥有1个编码器接口
+两个输入引脚借用了**输入捕获的通道1和通道2**
+
+编码器输入引脚为CH1和CH2，正交编码器，两端口波形相差90度。
+此外若资源紧张仍可以使用外部中断来连接编码器。
+
+正交编码器：
+![alt](/images/Snipaste_2025-01-21_22-52-32.png)
+
+A相超前于B相时，正转。 A上升沿时,B即将上升沿，故B为低电平。
+A相滞后于B相时，反转。 A上升沿时,B已经上升沿，故B为高电平。
+
+正交信号优点：
+1. 精度更高
+2. 抗噪声(设计抗噪声电路)
+
+正交编码器示例：
+![alt](./images/Snipaste_2025-01-21_23-10-21.png)
+
+#### 基本结构
+
+电路结构：
+![alt](./images/Snipaste_2025-01-21_23-01-22.png)
+从模式编码器接口控制时基单元，CNT变化受编码器接口控制。
+
+结构示意图：
+![alt](./images/Snipaste_2025-01-21_23-02-28.png)
+
+#### 工作模式
+
+![alt](./images/Snipaste_2025-01-21_23-04-37.png)
+仅在TI1计数 仅在TI2计数 TI1，TI2都计数
+对应于仅在A相上升沿下降沿自增自减，或者仅在B相上升沿下降沿自增自减，以及AB相均自增自减
+A相仅上升沿计数，一个周期记一次
+A相每个边沿都计数，一个周期记两次
+AB均每个边沿都计数，一个周期记四次
+
+均不反相：
+![alt](./images/Snipaste_2025-01-21_23-06-52.png)
+交替变化可以实现抗噪声的效果(一增一减计数不变)。
+
+T1反相：
+![alt](./images/Snipaste_2025-01-21_23-25-32.png)
+即反不反相在于是否存在非门。
+选择上升沿，直接输入不存在非门。
+选择下降沿，增加非门，会导致计数方向改变。
+可以通过改变一个引脚的极性，来改变计数方向。(改两回又变回去了)
+
+#### 代码逻辑
+
+代码结构：
+1. 开启RCC时钟 TIM GPIO
+2. 配置GPIO
+3. 配置时基单元
+4. 配置输入捕获单元
+5. 配置编码器模式
+6. 启动TIM
+
+要测编码器位置： 读取CNT值
+要测编码器速度和方向： 隔一段时间读取CNT 并清零
+
+相关函数：
+```C
+TIM_EncoderInterFaceConfig() //配置编码器模式
+TIM_ICInitStructure.TIM_ICPolarity //此时并非捕获边沿而是极性选择（是否加非门）
+```
+TI1 TI2都计数的模式下，转动一次计数四次
+
+测试频率速度需要设置闸门，每搁一段时间读取CNT。
+1. CNT的大小代表速度
+2. CNT的正负代表方向
+
+## 八、ADC数模转换
+
+### ADC简介
+
+ADC（Analog-Digital Converter）模拟-数字转换器
+ADC可以将引脚上连续变化的模拟电压转换为内存中存储的数字变量，建立模拟电路到数字电路的桥梁
+**12位逐次逼近型ADC**，**1us**转换时间
+输入电压范围：0\~3.3V，转换结果范围：0\~4095
+18个输入通道，可测量16个外部和2个内部信号源
+规则组和注入组两个转换单元
+模拟看门狗自动监测输入电压范围
+STM32F103C8T6 ADC资源：ADC1、ADC2，10个外部输入通道
+
+ADC实现了模拟信号到数字信号的转化。
+补充：
+
+    PWM也可以实现数字到模拟的转化。PWM只有0/1两种状态，可以输入到直流电机进行调速。但是只适用于惯性系统
+
+12位逐次逼近型ADC，12位的分辨率 0\~2^12-1 对应于 0\~4095 ,分辨率的位数越高，其结果就越精细。
+1us的转化时间表示为，AD转化从开始到结束需要1us的时间，对应于AD的转化频率为1MHZ。
+
+假设输入和转化范围为 0 - 3.3 对应于 0 - 4095 其为一一对应的线性关系。
+
+18个输入通道：包含16个GPIO口，其可以直接接入模拟源即可。 2个内部信号源，对应于温湿度传感器（测量CPU温度），内部参考电压(1.2V基准)
+
+规则组和注入组两个转换单元。
+
+模拟看门狗实现自动检测
+
+stm32F103对应有ADC1 ADC2两个ADC 对应于10个外部通道(其他八个未接入)
+
+### 逐次逼近型ADC
+
+ADC转化的基本原理
+![alt](./images/Snipaste_2025-01-22_16-56-30.png)
+
+### STM32ADC框图介绍
+
+电路图介绍
+![alt](./images/Snipaste_2025-01-22_17-14-13.png)
+
+ADC生图：
+![alt](./images/Snipaste_2025-01-22_17-15-13.png)
+
+ADC通道引脚对应图
+![alt](./images/Snipaste_2025-01-22_17-15-49.png)
+
+ADC基本结构图
+![alt](./images/Snipaste_2025-01-22_17-18-14.png)
+
+补充：
+
+    双ADC模式，ADC1 ADC2一起工作构成同步交叉模式。
+
+### ADC工作模式
+
+转化：
+    单次转化
+    连续转化
+扫描：
+    扫描模式
+    非扫描模式
+构成四种工作模式
+
+#### 单次转化非扫描模式
+
+![alt](./images/Snipaste_2025-01-22_17-20-05.png)
+只有序列1的位置有效，且转化一次以后立即停止。
+
+#### 连续转化非扫描模式
+
+![alt](./images/Snipaste_2025-01-22_17-22-24.png)
+只有序列1的位置有效，但是可以转化多次。EOC触发下一次的序列一转化。
+
+#### 单次转化扫描模式
+
+![alt](./images/Snipaste_2025-01-22_17-23-27.png)
+多个序列有效，但是只触发一次。
+规则组寄存器只有16位，需要立即利用DMA转移走。
+
+#### 连续转化扫描模式
+
+![alt](./images/Snipaste_2025-01-22_17-25-53.png)
+多序列有效，且可以连续触发。
+
+### 触发控制
+
+![alt](./images/Snipaste_2025-01-22_17-29-17.png)
+
+### 数据对齐
+
+![alt](./images/Snipaste_2025-01-22_17-30-54.png)
+
+### 转化时间
+
+![alt](./images/Snipaste_2025-01-22_17-33-45.png)
+
+### ADC校准
+
+![alt](./images/Snipaste_2025-01-22_17-34-31.png)
+
+### ADC函数
+
+ADC初始化部分：
+1. 开启RCC时钟 GPIO ADC
+2. 配置GPIO
+3. 配置多路开关选择ADC通道
+4. 配置AD 转换器
+5. 开关使能
+
+相关配置库函数：
+```C
+void ADC_DeInit(ADC_TypeDef* ADCx); //ADC回复默认值
+void ADC_Init(ADC_TypeDef* ADCx, ADC_InitTypeDef* ADC_InitStruct);//ADC根据结构体初始化
+void ADC_StructInit(ADC_InitTypeDef* ADC_InitStruct);//ADC结构体赋默认值
+void ADC_Cmd(ADC_TypeDef* ADCx, FunctionalState NewState);//ADC使能
+void ADC_DMACmd(ADC_TypeDef* ADCx, FunctionalState NewState);//ADC DMA使能
+void ADC_ITConfig(ADC_TypeDef* ADCx, uint16_t ADC_IT, FunctionalState NewState);//中断配置 使能ADC中断
+
+void ADC_ResetCalibration(ADC_TypeDef* ADCx);//复位校准寄存器
+FlagStatus ADC_GetResetCalibrationStatus(ADC_TypeDef* ADCx);//获取校准寄存器复位状态
+void ADC_StartCalibration(ADC_TypeDef* ADCx);//开始校准
+FlagStatus ADC_GetCalibrationStatus(ADC_TypeDef* ADCx);//获取校准状态
+void ADC_SoftwareStartConvCmd(ADC_TypeDef* ADCx, FunctionalState NewState);//使能软件触发ADC转换
+FlagStatus ADC_GetSoftwareStartConvStatus(ADC_TypeDef* ADCx);//获取ADC软件启动转换状态
+
+FlagStatus ADC_GetFlagStatus(ADC_TypeDef* ADCx, uint8_t ADC_FLAG);//获取标志位状态 转化是否结束
+void ADC_ClearFlag(ADC_TypeDef* ADCx, uint8_t ADC_FLAG);//清楚标志位
+ITStatus ADC_GetITStatus(ADC_TypeDef* ADCx, uint16_t ADC_IT);//中断中获取
+void ADC_ClearITPendingBit(ADC_TypeDef* ADCx, uint16_t ADC_IT);//中断中清除
+
+void ADC_DiscModeChannelCountConfig(ADC_TypeDef* ADCx, uint8_t Number);//间断通道配置
+void ADC_DiscModeCmd(ADC_TypeDef* ADCx, FunctionalState NewState);//启用间断模式
+void ADC_RegularChannelConfig(ADC_TypeDef* ADCx, uint8_t ADC_Channel, uint8_t Rank, uint8_t ADC_SampleTime);//规则组通道设置
+void ADC_ExternalTrigConvCmd(ADC_TypeDef* ADCx, FunctionalState NewState);//ADC外部触发转化控制
+uint16_t ADC_GetConversionValue(ADC_TypeDef* ADCx);//ADC获取转换值
+uint32_t ADC_GetDualModeConversionValue(void);//ADC获取双模式转化值
+
+//看门狗配置
+void ADC_AnalogWatchdogCmd(ADC_TypeDef* ADCx, uint32_t ADC_AnalogWatchdog);
+void ADC_AnalogWatchdogThresholdsConfig(ADC_TypeDef* ADCx, uint16_t HighThreshold, uint16_t LowThreshold);
+void ADC_AnalogWatchdogSingleChannelConfig(ADC_TypeDef* ADCx, uint8_t ADC_Channel);
+
+RCC_ADCCLKConfig(RCC_PCLK2_Div6);//配置ADC分频
+//结构体
+typedef struct
+{
+  uint32_t ADC_Mode;                      /*!< Configures the ADC to operate in independent or
+                                               dual mode. 
+                                               This parameter can be a value of @ref ADC_mode */
+
+  FunctionalState ADC_ScanConvMode;       /*!< Specifies whether the conversion is performed in
+                                               Scan (multichannels) or Single (one channel) mode.
+                                               This parameter can be set to ENABLE or DISABLE */
+
+  FunctionalState ADC_ContinuousConvMode; /*!< Specifies whether the conversion is performed in
+                                               Continuous or Single mode.
+                                               This parameter can be set to ENABLE or DISABLE. */
+
+  uint32_t ADC_ExternalTrigConv;          /*!< Defines the external trigger used to start the analog
+                                               to digital conversion of regular channels. This parameter
+                                               can be a value of @ref ADC_external_trigger_sources_for_regular_channels_conversion */
+
+  uint32_t ADC_DataAlign;                 /*!< Specifies whether the ADC data alignment is left or right.
+                                               This parameter can be a value of @ref ADC_data_align */
+
+  uint8_t ADC_NbrOfChannel;               /*!< Specifies the number of ADC channels that will be converted
+                                               using the sequencer for regular channel group.
+                                               This parameter must range from 1 to 16. */
+}ADC_InitTypeDef;
+```
+
+注意 EOC转换结束位，可以再读取ADC_DR后自动清除。
+
+补充：
+
+    输出产生抖动。
+    1. 双阈值避免抖动。@施密特触发器
+    2. 使用滤波方式消抖
+
+### 热敏电阻模块 KY - 013 
 
 
-### 输入比较
+## 九、DMA模块
+
+### DMA简介
+
+DMA（Direct Memory Access）直接存储器存取
+DMA可以提供外设和存储器或者存储器和存储器之间的高速数据传输，无须CPU干预，节省了CPU的资源
+12个独立可配置的通道： **DMA1（7个通道）， DMA2（5个通道）**
+每个通道都支持软件触发和特定的硬件触发
+STM32F103C8T6 DMA资源：DMA1（7个通道）
+
+补充：
+DMA被提供了直接访问STM32内存的权限
+其主要功能就是直接搬运数据，减少CPU负担
+其数据的转运路径有12个通道（STM32中）
+触发方式有两种：
+1. 外设到存储器转运：硬件转运（有转运的时机）
+2. 存储器到存储器转运：软件转运
+
+### 存储器映像
+存储器被映射到了什么样的逻辑地址
+![alt](./images/Snipaste_2025-01-23_14-08-46.png)
+
+![alt](./images/Snipaste_2025-01-23_14-11-39.png)
+
+### DMA框图
+![alt](./images/Snipaste_2025-01-23_14-16-59.png)
+
+1. 主动单元拥有对存储器访问权限，被动单元只能被主动单元读写
+2. DMA有访问内存的主动权，方便转运数据
+3. DMA既是主动单元又是被动单元
+4. Flash只读 总线直接访问会出错。DMA目的地址不能直接填写Flash地址，需要配置Flash接口控制器
+
+### DMA基本结构
+
+![alt](./images/Snipaste_2025-01-23_14-23-57.png)
+注意：写入传输计数器时，应当先关闭DMA再写入。
+
+### DMA请求
+
+![alt](./images/Snipaste_2025-01-23_14-25-39.png)
+
+### 数据宽度与对齐
+
+![alt](./images/Snipaste_2025-01-23_14-26-44.png)
+
+### DMA示例
+
+![alt](./images/Snipaste_2025-01-23_14-27-52.png)
+![alt](./images/Snipaste_2025-01-23_14-29-45.png)
+
+### DMA相关函数
+
+#### 地址映射范围
+
+uint8_t aa = 0x66; 展示地址：2000 0002 存储在SRAM中
+const uint8_t aa = 0x66; 展示地址：0800 09C0 存储再flash中
+
+const修饰后会存入flash，如OLED字模库加入const修饰后存入Flash
+
+查询外设寄存器地址方式： (uint32_t)&ADC->DR 固定地址
+
+寄存器地址分配方式：基地址加偏地址 利用结构体的地址顺序排序性设计
+ADC1->DR ADC1基地址 DR偏移地址。
+ADC1中仍可以按照基地址+偏移地址的方式继续排列
+
+#### DMA配置函数
+
+```C
+void DMA_DeInit(DMA_Channel_TypeDef* DMAy_Channelx); //恢复默认
+void DMA_Init(DMA_Channel_TypeDef* DMAy_Channelx, DMA_InitTypeDef* DMA_InitStruct); //DMA结构体初始化
+void DMA_StructInit(DMA_InitTypeDef* DMA_InitStruct); //结构体赋给默认值
+void DMA_Cmd(DMA_Channel_TypeDef* DMAy_Channelx, FunctionalState NewState); //DMA使能
+void DMA_ITConfig(DMA_Channel_TypeDef* DMAy_Channelx, uint32_t DMA_IT, FunctionalState NewState); //DMA中断配置
+void DMA_SetCurrDataCounter(DMA_Channel_TypeDef* DMAy_Channelx, uint16_t DataNumber); //设置当前计数器
+uint16_t DMA_GetCurrDataCounter(DMA_Channel_TypeDef* DMAy_Channelx); //获取当前计数器
+
+FlagStatus DMA_GetFlagStatus(uint32_t DMAy_FLAG); //标志位获取与清楚
+void DMA_ClearFlag(uint32_t DMAy_FLAG);
+ITStatus DMA_GetITStatus(uint32_t DMAy_IT);
+void DMA_ClearITPendingBit(uint32_t DMAy_IT);
+
+typedef struct
+{
+  __IO uint32_t CCR; //通道配置寄存器
+  __IO uint32_t CNDTR; //数据传输数量
+  __IO uint32_t CPAR; //外设地址寄存器
+  __IO uint32_t CMAR; //存储器地址寄存器
+} DMA_Channel_TypeDef;
+CCR
+__IO uint32_t CCR - DMA 通道配置寄存器（DMA Channel Configuration Register）
+作用：配置 DMA 通道的各种参数和控制选项。
+主要字段：
+EN：使能位，启用或禁用 DMA 通道。
+TCIE：传输完成中断使能位。
+HTIE：半传输完成中断使能位。
+TEIE：传输错误中断使能位。
+DIR：数据传输方向（从内存到外设或从外设到内存）。
+CIRC：循环模式使能位。
+PINC：外设地址增量模式使能位。
+MINC：存储器地址增量模式使能位。
+PSIZE：外设数据宽度（8 位、16 位或 32 位）。
+MSIZE：存储器数据宽度（8 位、16 位或 32 位）。
+PL：通道优先级（低、中、高、非常高）。
+
+__IO uint32_t CNDTR - DMA 通道数据传输数量寄存器（DMA Channel Number of Data Register）
+作用：指定要传输的数据项数量。
+主要字段：
+NDT：要传输的数据项数量。当 DMA 传输开始时，该值会自动递减，直到传输完成。
+
+__IO uint32_t CPAR - DMA 通道外设地址寄存器（DMA Channel Peripheral Address Register）
+作用：指定外设的基地址。
+主要字段：
+PA：外设地址。该地址是 DMA 传输过程中数据的源地址或目标地址，具体取决于传输方向。
+
+__IO uint32_t CMAR - DMA 通道存储器地址寄存器（DMA Channel Memory Address Register）
+作用：指定存储器的基地址。
+主要字段：
+MA：存储器地址。该地址是 DMA 传输过程中数据的源地址或目标地址，具体取决于传输方向。
+
+typedef struct
+{
+  uint32_t DMA_PeripheralBaseAddr; /*!< Specifies the peripheral base address for DMAy Channelx. */
+
+  uint32_t DMA_MemoryBaseAddr;     /*!< Specifies the memory base address for DMAy Channelx. */
+
+  uint32_t DMA_DIR;                /*!< Specifies if the peripheral is the source or destination.
+                                        This parameter can be a value of @ref DMA_data_transfer_direction */
+
+  uint32_t DMA_BufferSize;         /*!< Specifies the buffer size, in data unit, of the specified Channel. 
+                                        The data unit is equal to the configuration set in DMA_PeripheralDataSize
+                                        or DMA_MemoryDataSize members depending in the transfer direction. */
+
+  uint32_t DMA_PeripheralInc;      /*!< Specifies whether the Peripheral address register is incremented or not.
+                                        This parameter can be a value of @ref DMA_peripheral_incremented_mode */
+
+  uint32_t DMA_MemoryInc;          /*!< Specifies whether the memory address register is incremented or not.
+                                        This parameter can be a value of @ref DMA_memory_incremented_mode */
+
+  uint32_t DMA_PeripheralDataSize; /*!< Specifies the Peripheral data width.
+                                        This parameter can be a value of @ref DMA_peripheral_data_size */
+
+  uint32_t DMA_MemoryDataSize;     /*!< Specifies the Memory data width.
+                                        This parameter can be a value of @ref DMA_memory_data_size */
+
+  uint32_t DMA_Mode;               /*!< Specifies the operation mode of the DMAy Channelx.
+                                        This parameter can be a value of @ref DMA_circular_normal_mode.
+                                        @note: The circular buffer mode cannot be used if the memory-to-memory
+                                              data transfer is configured on the selected Channel */
+
+  uint32_t DMA_Priority;           /*!< Specifies the software priority for the DMAy Channelx.
+                                        This parameter can be a value of @ref DMA_priority_level */
+
+  uint32_t DMA_M2M;                /*!< Specifies if the DMAy Channelx will be used in memory-to-memory transfer.
+                                        This parameter can be a value of @ref DMA_memory_to_memory */
+}DMA_InitTypeDef;
+```
+
+DMA工作三个条件：
+1. 计数器大于0
+2. 触发源有触发信号(内存到内存模式，启动DMA时可以直接触发)
+3. 使能
+
+## 十、USART串口通信
+
+### 通信接口
+
+通信的目的：将一个设备的数据传送到另一个设备，扩展硬件系统
+通信协议：制定通信的规则，通信双方按照协议规则进行数据收发
+
+常见的通信接口
+![alt](./images/Snipaste_2025-01-24_19-25-56.png)
+
+相关概念：
+全双工 半双工 单工
+同步 异步
+单端电平(共地) 差分电平(速率更高 性能更好)
+点对点运输 多设备运输
+
+
+### 串口通信
+
+串口是一种应用十分广泛的通讯接口，串口成本低、容易使用、通信线路简单，可实现两个设备的互相通信
+单片机的串口可以使单片机与单片机、单片机与电脑、单片机与各式各样的模块互相通信，极大地扩展了单片机的应用范围，增强了单片机系统的硬件实力
+
+#### 硬件电路
+
+简单双向串口通信有两根通信线（发送端TX和接收端RX）
+TX与RX要交叉连接
+当只需单向的数据传输时，可以只接一根通信线
+**当电平标准不一致时，需要加电平转换芯片**
+
+![alt](./images/Snipaste_2025-01-24_19-28-46.png)
+
+注意单端信号需要共地，各自有自己的VCC供电，可以不介入VCC链接
+
+#### 电平标准
+
+电平标准是数据1和数据0的表达方式，是传输线缆中人为规定的电压与数据的对应关系，串口常用的电平标准有如下三种：
+
+TTL电平：+3.3V或+5V表示1，0V表示0
+RS232电平：-3\~-15V表示1，+3\~+15V表示0(大型机器使用)
+RS485电平：两线压差+2\~+6V表示1，-2\~-6V表示0（差分信号）
+差分信号抗干扰能力强，通信距离可达上千米
+
+#### 串口参数
+
+波特率：串口通信的速率(双方约定)
+起始位：标志一个数据帧的开始，固定为低电平
+数据位：数据帧的有效载荷，1为高电平，0为低电平，**低位先行**
+校验位：用于数据验证，根据数据位计算得来
+停止位：用于数据帧间隔，固定为高电平
+
+时序图：
+![alt](./images/Snipaste_2025-01-24_19-30-50.png)
+
+时序示例：
+![alt](./images/Snipaste_2025-01-24_19-31-57.png)
+
+奇偶校验：  
+可以判断奇数位错误
+当进行奇校验时，奇数个1 (异或)'
+当进行偶校验时，偶数个1 (异或)
+
+### USART 串口
+
+#### 简介
+
+USART（Universal Synchronous/Asynchronous Receiver/Transmitter）通用同步/异步收发器
+USART是STM32内部集成的硬件外设，可根据数据寄存器的一个字节数据自动生成数据帧时序，从TX引脚发送出去，也可自动接收RX引脚的数据帧时序，拼接为一个字节数据，存放在数据寄存器里
+自带波特率发生器，**最高达4.5Mbits/s**
+可配置数据位长度（8/9）、停止位长度（0.5/1/1.5/2）
+可选校验位（无校验/奇校验/偶校验）
+支持同步模式、硬件流控制、DMA、智能卡、IrDA、LIN
+
+STM32F103C8T6 USART资源： USART1(APB2)、 USART2(APB1)、 USART3
+
+S代表Synchronous支持时钟输出
+
+#### USART硬件结构
+
+![alt](./images/Snipaste_2025-01-24_19-50-16.png)
+
+唤醒单元可以实现串口挂载多设备
+为每一个串口设备分配一个地址，利用唤醒单元唤醒指定设备。
+
+#### 串口引脚
+
+![alt](./images/Snipaste_2025-01-24_20-03-51.png)
+
+#### 简化结构图
+
+![alt](./images/Snipaste_2025-01-24_20-06-19.png)
+
+#### 数据帧
+
+![alt](./images/Snipaste_2025-01-24_20-07-51.png)
+
+停止位时长可选
+
+![alt](./images/Snipaste_2025-01-24_20-08-47.png)
+
+#### 起始帧检测
+
+示意图：
+![alt](./images/Snipaste_2025-01-24_20-10-26.png)
+
+采样时钟：配置成波特率的十六倍频
+所有的1位传输就要触发十六次采样边沿
+当第一次检测到0判断进入起始位，之后第 3 5 7 一批采样 8 9 10又一批
+且要求三次采样中至少两个0.加入采样到2个0 1个1.则置位NE表示需要噪声处理
+
+当起始边沿采样通过后，此后均在第 8 9 10次边沿采样，保持在数据中间位采样。
+
+采样流程：
+![alt](./images/Snipaste_2025-01-24_20-15-13.png)
+
+#### 波特率发生器(分频器)
+
+![alt](./images/Snipaste_2025-01-24_20-17-28.png)
+
+USART 寄存器配置： 
+状态寄存器 SR
+数据寄存器 DR
+配置寄存器 CR
+
+#### 数据模式
+
+![alt](./images/Snipaste_2025-01-24_20-20-33.png)
+
+HEX数据包：
+
+![alt](./images/Snipaste_2025-01-24_20-21-16.png)
+
+文本数据包：
+
+![alt](./images/Snipaste_2025-01-24_20-21-48.png)
+
+数据包接收的状态转移图
+
+![alt](./images/Snipaste_2025-01-24_20-22-31.png)
+![alt](./images/Snipaste_2025-01-24_20-24-08.png)
+
+通过数据包可以接受多位数据。
+可以自行设计数据包的分隔模式。
+自己设计问题：出现载荷重复问题
+1. 限制载荷的数据范围
+2. 使用固定长度包，数据对齐
+3. 增加包头包尾数目
+其他解决办法参见计算机网络透明传输
+
+数据包传输的是字节流，可以传输任意类型，double，结构体等等
+发送的数据可以经过译码翻译，适用于指令输入
+是人机交互的一种方式。
+eg 蓝亚AT模式
+
+ASCII 7位编码 8位扩展码
+汉字编码：GBK GB2312 GB180030
+
+统一字符集 Unicode UTF-8编码
+
+### USART函数代码
+
+初始化过程：
+1. RCC时钟开启 GPIO USART
+2. GPIO初始化 TX复用输出 RX输入
+3. 配置USART 结构
+4. 开始USART
+5. 接收配置IT中断 ITConfig NVIC配置
+6. 调用函数 发送接收状态位
+
+库函数：
+```C
+void USART_DeInit(USART_TypeDef* USARTx);//恢复默认值
+void USART_Init(USART_TypeDef* USARTx, USART_InitTypeDef* USART_InitStruct);//串口初始化
+void USART_StructInit(USART_InitTypeDef* USART_InitStruct);//结构体赋给默认值
+
+void USART_ClockInit(USART_TypeDef* USARTx, USART_ClockInitTypeDef* USART_ClockInitStruct); //时钟输出话
+void USART_ClockStructInit(USART_ClockInitTypeDef* USART_ClockInitStruct); //时钟结构体赋给默认值
+
+void USART_Cmd(USART_TypeDef* USARTx, FunctionalState NewState);//开启USART
+void USART_ITConfig(USART_TypeDef* USARTx, uint16_t USART_IT, FunctionalState NewState);//中断配置
+void USART_DMACmd(USART_TypeDef* USARTx, uint16_t USART_DMAReq, FunctionalState NewState);//DMA使能配置
+
+void USART_SetAddress(USART_TypeDef* USARTx, uint8_t USART_Address);//设置USART地址
+void USART_WakeUpConfig(USART_TypeDef* USARTx, uint16_t USART_WakeUp);//唤醒USART设备
+
+void USART_SendData(USART_TypeDef* USARTx, uint16_t Data);//发送数据 写DR寄存器
+uint16_t USART_ReceiveData(USART_TypeDef* USARTx);//接收数据 读DR寄存器
+
+FlagStatus USART_GetFlagStatus(USART_TypeDef* USARTx, uint16_t USART_FLAG);//获取标志位
+void USART_ClearFlag(USART_TypeDef* USARTx, uint16_t USART_FLAG);//清楚标志位
+ITStatus USART_GetITStatus(USART_TypeDef* USARTx, uint16_t USART_IT);
+void USART_ClearITPendingBit(USART_TypeDef* USARTx, uint16_t USART_IT);
+
+注意： 无需手动清楚接收标志位，自动清零。
+
+USART结构体：
+typedef struct
+{
+  uint32_t USART_BaudRate;            /*!< This member configures the USART communication baud rate.
+                                           The baud rate is computed using the following formula:
+                                            - IntegerDivider = ((PCLKx) / (16 * (USART_InitStruct->USART_BaudRate)))
+                                            - FractionalDivider = ((IntegerDivider - ((u32) IntegerDivider)) * 16) + 0.5 */
+
+  uint16_t USART_WordLength;          /*!< Specifies the number of data bits transmitted or received in a frame.
+                                           This parameter can be a value of @ref USART_Word_Length */
+
+  uint16_t USART_StopBits;            /*!< Specifies the number of stop bits transmitted.
+                                           This parameter can be a value of @ref USART_Stop_Bits */
+
+  uint16_t USART_Parity;              /*!< Specifies the parity mode.
+                                           This parameter can be a value of @ref USART_Parity
+                                           @note When parity is enabled, the computed parity is inserted
+                                                 at the MSB position of the transmitted data (9th bit when
+                                                 the word length is set to 9 data bits; 8th bit when the
+                                                 word length is set to 8 data bits). */
+ 
+  uint16_t USART_Mode;                /*!< Specifies wether the Receive or Transmit mode is enabled or disabled.
+                                           This parameter can be a value of @ref USART_Mode */
+
+  uint16_t USART_HardwareFlowControl; /*!< Specifies wether the hardware flow control mode is enabled
+                                           or disabled.
+                                           This parameter can be a value of @ref USART_Hardware_Flow_Control */
+} USART_InitTypeDef;
+```
+
+printf()移植方法：
+
+方法一：
+
+![alt](./images/Snipaste_2025-01-24_21-27-21.png)
+选中嵌入式平台优化的精简库。
+对printf函数进行重定向，由STDIO标准输出到串口，从而显示在计算机上。
+
+在Serial.c文件中，包含stdio.h头文件。重写底层fputc()函数
+注意重写的fputc()函数无需再Serial.h中声明。
+且换行需要使用\r\n =>受制于平台问题
+
+此方法只适用于单一串口。
+```C
+int fputc(int ch, FILE *f)
+{
+	Serial_SendByte(ch);
+	return ch;
+}
+```
+
+方法二：
+printf指定到某一个串口发送
+sprintf(String,"format",arg);
+Serial_SendString(String);
+不涉及重定向问题
+
+方法三：
+对sprintf进行封装。
+```C
+void Serial_Printf(char *format, ...)
+{
+	char String[100];
+	va_list arg;
+	va_start(arg, format);
+	vsprintf(String, format, arg);
+	va_end(arg);
+	Serial_SendString(String);
+}
+```
+
+改字报错问题：
+![alt](./images/Snipaste_2025-01-24_21-32-48.png)
+
+编码问题：
+统一使用UTF-8编码
+中文使用GBK2312与GBK编码兼容
+
+## 十一、单总线通信
+
+### 18B20 温度传感器
+
+#### 模块简介
+
+该模块使用的是单总线数字温度传感器 DS18B20，外界供电电压范围为 3.0 V 至 5.5 V，无需备用电源。 
+测量温度范围为-55 ° C 至+125 ℃ ， 华氏相当于是67 ° F 到 257° F。
+-10 °C 至+85 ° C 范围内精度为±0.5 ° C 。
+
+温度传感器可编程的分辨率为 9~12 位，温度转换为 12 位数字格式。
+最大值为 750 毫秒 用户可定义的非易失性温度报警设置。
+
+每一个 DS18B20 的包含一个独特的序号，多个 ds18b20s 可以同时存在于一条总线。
+温度传感器可同时放置在多个不同的地方检测温度。
+
+![alt](./images/Snipaste_2025-01-31_10-21-59.png)
+
+#### 模块使用
+
+##### DS18B20引脚链接
+
+![alt](./images/Snipaste_2025-01-31_10-25-42.png)
+
+##### DS18B20工作时序
+
+单总线是一种半双工通信方式，DS18B20共有6种信号类型：复位脉冲、应答脉冲、写0、写1、读0和读1。
+所有这些信号，除了应答脉冲以外，都由主机发出同步信号。
+并且发送所有的命令和数据都是字节的低位在前。
+
+![alt](./images/Snipaste_2025-01-31_10-29-00.png)
+
+![alt](./images/Snipaste_2025-01-31_10-29-50.png)
+
+初始化序列如下：
+
+![alt](./images/Snipaste_2025-01-31_10-32-08.png)
+
+可配置成**开漏输出**模式。
+1. 主机输出低电平维持480us\-960us 产生复位脉冲
+2. 主机释放总线，上拉电阻将总线拉高，其中需要15\-60us
+3. 之后主机进入接受模式，DS18B20拉低总线60\-240us,产生低电平应答脉冲
+
+完成初始化时序
+
+写时序如下：
+
+包含写1 和 写0时序
+
+![alt](./images/Snipaste_2025-01-31_10-38-23.png)
+
+发送一位：
+主机将总线拉低60~120us，然后释放总线，表示发送0；
+主机将总线拉低1~15us，然后释放总线，表示发送1。
+从机将在总线拉低30us后（典型值）读取电平，整个时间片应大于60us
+
+
+读时序如下：
+
+![alt](./images/Snipaste_2025-01-31_10-41-10.png)
+
+接收一位：
+主机将总线拉低1~15us，然后释放总线，并在拉低后15us内读取总线电平（尽量贴近15us的末尾），读取为低电平则为接收0，读取为高电平则为接收1 ，整个时间片应大于60us
+
+发送接收一个字节：
+
+![alt](./images/Snipaste_2025-01-31_10-52-28.png)
+
+
+##### DS18B20工作流程
+
+初始化：从机复位，主机判断从机是否响应
+ROM操作：ROM指令+本指令需要的读写操作
+功能操作：功能指令+本指令需要的读写操作
+
+指令如下：
+![alt](./images/Snipaste_2025-01-31_10-53-55.png)
+
+##### DS18B20数据帧
+
+温度变换数据帧：
+![alt](./images/Snipaste_2025-01-31_10-58-19.png)
+
+初始化，跳过ROM指令，开启温度变化。
+
+温度读取指令：
+![alt](./images/Snipaste_2025-01-31_10-58-04.png)
+
+初始化，跳过ROM指令，读取暂存器。
+读操作低位在前，高位在后。
+
+##### DS18B20温度格式
+
+![alt](./images/Snipaste_2025-01-31_11-00-59.png)
+
+### DHT11 温湿度传感器
+
+DHT11数字温湿度传感器是一款含有已校准数字信号输出的温湿度复合传感器，传感器内部包括一个8位单片机控制一个电阻式感湿元件和一个NTC测温元件
+
+类单总线协议传输数据，使用简单便捷
+测量温度范围在0-50℃，分辨率为1℃，误差在±2℃。
+湿度的测量范围位20%-95%RH，分辨率为1%RH，误差在±5%RH
+工作电压：3.3V-5.5V
+
+#### 原理图
+
+下图为DHT11和单片机之间的接线图
+DHT11的数据输出口接单片机的IO口，需要上拉一个5K左右的上拉电阻，保证空闲时刻处在高电平
+
+![alt](./images/Snipaste_2025-02-01_21-17-15.png)
+
+注意DHT11一般是自带上拉电阻的，无需自行加装。
+
+#### 工作原理
+
+DHT11采用**类单总线协议传输数据**，与1\-Wire协议存在异同之处
+DHT11一次通信时间4ms左右，仪器上电后，要等待1s以越过不稳定状态，在此期间无需发送任何指令
+
+数据分为小数部分和整数部分，一次完整的数据传输为40bit，高位先出
+
+数据格式：8bit湿度整数数据+8bit湿度小数数据+8bit温度整数数据+8bit温度小数数据+8bit校验
+其中8bit校验 = 8bit湿度整数数据+8bit湿度小数数据+8bit温度整数数据+8bit温度小数数据校验可以判断数据是否正确发送
+
+时序如下：
+
+主机发送起始信号以后，DHT11发送响应信号，然后发送40bit的数据，**高位在前**
+
+![alt](./images/Snipaste_2025-02-01_21-20-47.png)
+
+起始信号：总线空闲状态由DHT11内置上拉电阻拉高，**主机拉低总线至少18ms后释放总线20-40us**
+
+DHT11响应：存在的DHT11会及时响应主机，同时**拉低总线80us后，释放总线80us，然后拉低总线**，表示开始传送数据
+
+![alt](./images/Snipaste_2025-02-01_21-22-28.png)
+
+发送数据：当总线是低电平是表示开始发送数据，同时存在50us低电平时隙，之后**拉高总线，高电平的持续时间表示发送0或者1，当高电平持续时间为26us-28us表示发送0，高电平持续时间为70us时，表示发送1**
+数据发送完毕，由上拉电阻拉高，置回空闲高电平状态
+
+发送“0”：
+![alt](./images/Snipaste_2025-02-01_21-24-04.png)
+发送“1”：
+![alt](./images/Snipaste_2025-02-01_21-24-40.png)
+
+DHT11与STM32单片机连接使用时，需要将VCC接3.3V，GND接地，DAT接IO口。
+**由于DHT11内置上拉电阻，可以将IO口配置成开漏输出模式，这样就不需要切换输入输出模式** 
+如果配置成推挽输出模式，只能输出，不能输入，还需要在STM32接收数据时，配置成输入模式，比较麻烦。
+
+<span style="color:red">开漏输出在芯片内置上拉电阻时，可以直接读入输入电平
+推挽输出则需要切换输入输出模式</span>
+原因：开漏输出模式下，输出1时，若外部接有上拉电阻，此时引脚的电平完全由外界控制。可以读取引脚电平。
+#### 示例代码
+
+```C
+/*
+@brief:DHT11初始化
+@param:无
+@retval:无
+*/
+void DHT11_Init(void)
+{
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA,ENABLE);	//开启GPIOA时钟
+	GPIO_InitTypeDef GPIO_Initstructure;
+	GPIO_Initstructure.GPIO_Mode = GPIO_Mode_Out_OD;		//开漏输出
+	GPIO_Initstructure.GPIO_Pin = GPIO_Pin_7;
+	GPIO_Initstructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA,&GPIO_Initstructure);					//初始化GPIOPA7
+	
+	GPIO_SetBits(GPIOA,GPIO_Pin_7);							//默认高电平
+}
+
+/*
+@brief:置PA7高低电平
+@param:BitValue:1|0
+@retval:无
+*/
+void WriteIO(uint8_t BitValue)
+{
+	GPIO_WriteBit(GPIOA,GPIO_Pin_7,(BitAction)BitValue);
+}
+
+/*
+@brief:DHT11起始信号
+@param:无
+@retval:无
+*/
+void DHT11_Start()
+{
+	WriteIO(0);		//主机拉低总线
+	Delay_ms(20);	//至少拉低18ms
+	WriteIO(1);		//释放总线
+	Delay_us(30);	//释放总线20~40us
+}
+
+/*
+@brief:起始信号以后检测DHT11的响应信号
+@param:无
+@retval:stateData,1表示DHT11响应,2表示DHT11无响应
+*/
+uint8_t DHT11_Check()
+{
+	uint8_t stateData = 0;
+	if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_7) == RESET)//DHT11收到起始信号后会把总线拉低
+	{
+		Delay_us(80);//等待80us
+		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_7) == SET)//DHT11拉高表示响应信号有用
+		{
+			stateData = 1;
+		}
+		else
+		{
+			stateData = 2;
+		}
+		while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_7) == SET);//引脚恢复低电平则表示传感器准备发数据
+	}
+	return stateData;
+}
+/*
+@brief:接收DHT11传感器的一个字节数据
+@param:无
+@retval:Byte:接收的数据
+*/
+uint8_t DHT11_ReadByte()
+{
+	uint8_t i,Byte = 0x00;// i是位数 byte是接受的字节
+	for(i=0;i<8;i++)
+	{
+		while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_7) == RESET);//DHT11每发一位数据之前,都先拉低,所以等待总线拉高
+		Delay_us(40);//等待40us
+		//高电平持续时间26-28us为0,70us为1
+		if(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_7))
+		{
+			Byte |= (0x80>>i);//高位在前
+		}
+		while(GPIO_ReadInputDataBit(GPIOA,GPIO_Pin_7) == SET);//等待高电平结束,为下一次接收数据做准备
+	}
+	return Byte;
+}
+
+/*
+@brief:接收DHT11传感器的温度和湿度
+@param1:
+@param1:
+@retval:Byte:接收的数据
+*/
+uint8_t DHT11_ReadData(uint8_t *Hum,uint8_t *FHum,uint8_t *Temp,uint8_t *FTemp)
+{
+	uint8_t Buf[5];//传来的40bit数据
+	uint8_t i,Flag = 0;
+	DHT11_Start();//起始信号
+	if(DHT11_Check() == 1)//DHT11正确响应
+	{
+		for(i=0;i<5;i++) //循环读取五次 五个字节
+		{
+			Buf[i] = DHT11_ReadByte();//读取5个字节存在数组中
+		}
+		Delay_us(60);//保证完整读取
+		if(Buf[0] + Buf[1] + Buf[2] + Buf[3] == Buf[4])//校验数据是否有效,如果有效
+		{
+			*Hum = Buf[0];		//湿度整数部分
+			*FHum = Buf[1];		//湿度小数部分
+			*Temp = Buf[2];		//温度整数部分
+			*FTemp = Buf[3];	//温度小数部分
+			Flag = 2;			//验证读取数据是否正确
+			return Flag;
+		}
+		else//校验失败
+		{
+			*Hum = 0xFF;
+			*FHum = 0xFF;
+			*Temp = 0xFF;
+			*FTemp = 0xFF;
+		}
+	}
+	else//DHT11无响应
+	{
+		*Hum = 0xFF;
+		*FHum = 0xFF;
+		*Temp = 0xFF;
+		*FTemp = 0xFF;
+	}
+}
+
+DHT11_ReadData(&Hum_int,&Hum_dec,&Temp_int,&Temp_dec);	//读取DHT11的值,湿度整数,湿度小数,温度整数,湿度小数
+OLED_ShowNum(40,25,Temp_int,2,OLED_8X16);			//温度整数部分
+OLED_ShowChar(56,25,'.',OLED_8X16);
+OLED_ShowNum(60,25,Temp_dec,1,OLED_8X16);			//温度小数部分
+OLED_ShowNum(95,25,Hum_int,2,OLED_8X16);			//湿度整数部分
+
+```
+
+## 十二、蜂鸣器
+
+### 简介 
+
+蜂鸣器是一种将电信号转换为声音信号的器件，常用来产生设备的按键音、报警音等提示信号
+蜂鸣器按驱动方式可分为有源蜂鸣器和无源蜂鸣器
+有源蜂鸣器：内部自带振荡源，将正负极接上直流电压即可持续发声，频率固定
+无源蜂鸣器：内部不带振荡源，需要控制器提供振荡脉冲才可发声，调整提供振荡脉冲的频率，可发出不同频率的声音
+
+### 驱动电路
+
+![alt](./images/Snipaste_2025-02-02_14-25-42.png)
+
+加大电流，增强其驱动能力
+
+### 音频对照
+
+![alt](./images/Snipaste_2025-02-02_14-26-37.png)
+
+可以通过PWM来控制音乐的音调的时长，利用stm32产生PWM信号
+选择定时器：选择一个适合的定时器，比如TIM2或TIM3。
+配置定时器：设置定时器的计数频率，计算所需的PWM频率（比如440Hz对应音乐中的A4音符）。
+
+PWM周期：对应音符的频率。
+PWM占空比：设置蜂鸣器的响度，通常为50%（即高电平和低电平的时间相等）。效果不明显
+
+补充PWM1/2模式：
+![alt](./images/Snipaste_2025-02-02_14-57-18.png)
+
+## 十三、IIC协议
+
