@@ -1,5 +1,7 @@
 # FreeRTOS实时操作系统复习
 
+笔记基于韦东山FreeRTOS学习手册修改
+
 ## 一、笔记前言
 
 ### 三大要点：
@@ -2128,3 +2130,1498 @@ main逻辑
 
 ### 递归锁
 
+#### 死锁
+
+日常生活的死锁：我们只招有工作经验的人！我没有工作经验怎么办？那你就去找工作啊！
+
+假设有2个互斥量M1、M2，2个任务A、B：
+- A获得了互斥量M1
+- B获得了互斥量M2
+- A还要获得互斥量M2才能运行，结果A阻塞
+- B还要获得互斥量M1才能运行，结果B阻塞
+- A、B都阻塞，再无法释放它们持有的互斥量
+- 死锁发生！
+
+#### 自我死锁(递归上锁)
+
+假设这样的场景：
+- 任务A获得了互斥锁M
+- 它调用一个库函数
+- 库函数要去获取同一个互斥锁M，于是它阻塞：任务A休眠，等待任务A来释放互斥锁！
+- 死锁发生！
+
+![](images/APi-2025-02-26-16-08-43.png)
+
+#### 递归锁方案
+
+可以使用递归锁(Recursive Mutexes)，去解决自我死锁的问题：
+
+- 任务A获得递归锁M后，它还可以多次去获得这个锁
+- "take"了N次，要"give"N次，这个锁才会被释放
+
+递归锁的函数根一般互斥量的函数名不一样，参数类型一样，列表如下：
+
+|      | 递归锁                         | 一般互斥量            |
+| ---- | ------------------------------ | --------------------- |
+| 创建 | xSemaphoreCreateRecursiveMutex | xSemaphoreCreateMutex |
+| 获得 | xSemaphoreTakeRecursive        | xSemaphoreTake        |
+| 释放 | xSemaphoreGiveRecursive        | xSemaphoreGive        |
+
+函数原型如下：
+```c
+/* 创建一个递归锁，返回它的句柄。
+* 此函数内部会分配互斥量结构体
+* 返回值: 返回句柄，非NULL表示成功
+*/
+SemaphoreHandle_t xSemaphoreCreateRecursiveMutex( void );
+
+/* 释放 */
+BaseType_t xSemaphoreGiveRecursive( SemaphoreHandle_t xSemaphore );
+
+/* 获得 */
+BaseType_t xSemaphoreTakeRecursive(SemaphoreHandle_t xSemaphore,
+TickType_t xTicksToWait
+);
+
+```
+#### 递归锁使用
+
+递归锁实现了：谁上锁就由谁解锁。
+
+主函数：
+![](images/APi-2025-02-26-16-14-19.png)
+
+设计两个任务：
+- A：任务1优先级最高，先运行，获得递归锁
+- B：任务1阻塞，让任务2得以运行
+- C：任务2运行，看看能否获得别人持有的递归锁：不能
+- D：任务2故意执行"give"操作，看看能否释放别人持有的递归锁：不能
+- E：任务2等待递归锁
+- F：任务1阻塞时间到后继续运行，使用循环多次获得、释放递归锁
+- 递归锁在代码上实现了：谁持有递归锁，必须由谁释放。
+
+![](images/APi-2025-02-26-16-15-31.png)
+结果：
+![](images/APi-2025-02-26-16-16-37.png)
+
+---
+
+总结：
+**互斥量与二进制信号量**
+- 互斥量创建后无需手动Give(初始值默认是1)
+- 二进制信号量创建后需要手动Give(初始值默认是0)
+- 互斥量实现了优先级继承，解决了优先级反转的问题
+- 互斥量和二进制信号量都没有解决递归上锁的问题
+- 互斥量和二进制信号量的使用完全一致
+- 互斥量无法在ISR中使用，二进制信号量则可以
+
+**互斥量与递归锁**
+- 递归锁解决了递归上锁的问题
+- 递归锁实现了谁上锁谁解锁
+
+---
+
+## 九、事件组 
+
+学校组织秋游，组长在等待：
+- 张三：我到了
+- 李四：我到了
+- 王五：我到了
+- 组长说：好，大家都到齐了，出发！
+秋游回来第二天就要提交一篇心得报告，组长在焦急等待：张三、李四、王五谁先写好就交谁的。
+
+在这个日常生活场景中：
+- 出发：要等待这3个人都到齐，他们是"与"的关系
+- 交报告：只需等待这3人中的任何一个，他们是"或"的关系
+
+在FreeRTOS中，可以使用事件组(event group)来解决这些问题。
+
+本章涉及如下内容：
+- 事件组的概念与操作函数
+- 事件组的优缺点
+- 怎么设置、等待、清除事件组中的位
+- 使用事件组来同步多个任务
+
+### 事件组概念与操作 
+
+#### 概念
+
+事件组可以和位图的概念对应：
+- 每一位表示一个事件
+- 每一位事件的含义由程序员决定，比如：Bit0表示用来串口是否就绪，Bit1表示按键是否被按下
+- 这些位，值为1表示事件发生了，值为0表示事件没发生
+- 一个或多个任务、ISR都可以去写这些位；一个或多个任务、ISR都可以去读这些位
+- 可以等待某一位、某些位中的任意一个，也可以等待多位
+
+图解：
+![](images/APi-2025-02-26-16-25-10.png)
+
+事件组用一个整数来表示，其中的高8位留给内核使用，只能用其他的位来表示事件。(**高八位由内核使用**)
+那么这个整数是多少位的？
+
+- 如果configUSE_16_BIT_TICKS是1，那么这个整数就是16位的，低8位用来表示事件
+- 如果configUSE_16_BIT_TICKS是0，那么这个整数就是32位的，低24位用来表示事件
+
+configUSE_16_BIT_TICKS是用来表示Tick Count的，怎么会影响事件组？
+这只是基于效率来考虑
+
+- 如果configUSE_16_BIT_TICKS是1，就表示该处理器使用16位更高效，所以事件组也使用16位
+- 如果configUSE_16_BIT_TICKS是0，就表示该处理器使用32位更高效，所以事件组也使用32位
+
+#### 事件组操作 
+
+事件组和队列、信号量等不太一样，主要集中在2个地方：
+
+- 唤醒谁？
+  - 队列、信号量：事件发生时，只会唤醒一个任务
+  - 事件组：事件发生时，会唤醒所有符号条件的任务，简单地说它有"广播"的作用
+- 是否清除事件？
+  - 队列、信号量：是消耗型的资源，队列的数据被读走就没了；信号量被获取后就减少了
+  - 事件组：被唤醒的任务有两个选择，可以让事件保留不动，也可以清除事件
+
+事件组的常规操作：
+
+- 先创建事件组
+- 任务C、D等待事件：
+  - 等待什么事件？可以等待某一位、某些位中的任意一个，也可以等待多位。简单地说就是"或"、"与"的关系。
+  - 得到事件时，要不要清除？可选择清除、不清除。
+- 任务A、B产生事件：设置事件组里的某一位、某些位
+
+### 事件组函数 
+
+#### 创建事件组
+
+使用事件组之前，要先创建，得到一个句柄；
+使用事件组时，要使用句柄来表明使用哪个事件组。
+有两种创建方法：动态分配内存、静态分配内存。
+函数原型如下：
+```c
+/* 创建一个事件组，返回它的句柄。
+* 此函数内部会分配事件组结构体
+* 返回值: 返回句柄，非NULL表示成功
+*/
+EventGroupHandle_t xEventGroupCreate( void );
+/* 创建一个事件组，返回它的句柄。
+* 此函数无需动态分配内存，所以需要先有一个StaticEventGroup_t结构体，并传入它的指针
+* 返回值: 返回句柄，非NULL表示成功
+*/
+EventGroupHandle_t xEventGroupCreateStatic( StaticEventGroup_t * pxEventGroupBuffer );
+```
+
+#### 删除事件组
+
+对于动态创建的事件组，不再需要它们时，可以删除它们以回收内存。
+
+vEventGroupDelete可以用来删除事件组，函数原型如下：
+```C 
+/*
+* xEventGroup: 事件组句柄，你要删除哪个事件组
+*/
+void vEventGroupDelete( EventGroupHandle_t xEventGroup )
+```
+
+#### 设置事件组 
+
+可以设置事件组的某个位、某些位，使用的函数有2个：
+- 在任务中使用xEventGroupSetBits()
+- 在ISR中使用xEventGroupSetBitsFromISR()
+
+有一个或多个任务在等待事件，如果这些事件符合这些任务的期望，那么任务还会被唤醒。
+函数原型：
+```C 
+/* 设置事件组中的位
+* xEventGroup: 哪个事件组
+* uxBitsToSet: 设置哪些位?
+* 如果uxBitsToSet的bitX, bitY为1, 那么事件组中的bitX, bitY被设置为1
+* 可以用来设置多个位，比如 0x15 就表示设置bit4, bit2, bit0
+* 返回值: 返回原来的事件值(没什么意义, 因为很可能已经被其他任务修改了)
+*/
+EventBits_t xEventGroupSetBits( EventGroupHandle_t xEventGroup,
+const EventBits_t uxBitsToSet );
+
+/* 设置事件组中的位
+* xEventGroup: 哪个事件组
+* uxBitsToSet: 设置哪些位?
+* 如果uxBitsToSet的bitX, bitY为1, 那么事件组中的bitX, bitY被设置为1
+* 可以用来设置多个位，比如 0x15 就表示设置bit4, bit2, bit0
+* pxHigherPriorityTaskWoken: 有没有导致更高优先级的任务进入就绪态? pdTRUE-有,pdFALSE-没有
+* 返回值: pdPASS-成功, pdFALSE-失败
+*/
+BaseType_t xEventGroupSetBitsFromISR( EventGroupHandle_t xEventGroup,
+const EventBits_t uxBitsToSet,
+BaseType_t * pxHigherPriorityTaskWoken );
+```
+
+值得注意的是，ISR中的函数，比如队列函数xQueueSendToBackFromISR 、信号量函数xSemaphoreGiveFromISR ，它们会唤醒某个任务，最多只会唤醒1个任务。
+
+但是设置事件组时，有可能导致多个任务被唤醒，这会带来很大的不确定性。
+所以xEventGroupSetBitsFromISR 函数不是直接去设置事件组，而是给一个FreeRTOS后台任务(daemon task)发送队列数据，由这个任务来设置事件组。
+
+如果**后台任务的优先级比当前被中断的任务优先级高**， xEventGroupSetBitsFromISR 会设置*pxHigherPriorityTaskWoken 为pdTRUE。
+如果daemon task成功地把队列数据发送给了后台任务，那么xEventGroupSetBitsFromISR 的返回值就是pdPASS。
+
+#### 等待事件 
+
+使用xEventGroupWaitBits 来等待事件，可以等待某一位、某些位中的任意一个，也可以等待多位；等到期望的事件后，还可以清除某些位。
+
+函数原型如下：
+
+```c
+EventBits_t xEventGroupWaitBits( EventGroupHandle_t xEventGroup,
+const EventBits_t uxBitsToWaitFor,
+const BaseType_t xClearOnExit,
+const BaseType_t xWaitForAllBits,
+TickType_t xTicksToWait );
+```
+先引入一个概念：unblock condition。
+一个任务在等待事件发生时，它处于阻塞状态；
+当期望的时间发生时，这个状态就叫"unblock condition"，非阻塞条件，或称为"非阻塞条件成立"；
+当"非阻塞条件成立"后，该任务就可以变为就绪态。
+
+参数列表：
+![](images/APi-2025-02-26-16-41-48.png)
+
+举例：
+![](images/APi-2025-02-26-16-45-38.png)
+
+注意：
+你可以使用xEventGroupWaitBits() 等待期望的事件
+它发生之后再使用xEventGroupClearBits()来清除。
+但是这两个函数之间，有可能被其他任务或中断抢占，它们可能会修改事件组。
+可以使用设置xClearOnExit 为pdTRUE，使得对事件组的测试、清零都在xEventGroupWaitBits()函数内部完成，这是一个原子操作。
+
+#### 同步点
+
+有一个事情需要多个任务协同，比如：
+- 任务A：炒菜
+- 任务B：买酒
+- 任务C：摆台
+- A、B、C做好自己的事后，还要等别人做完；大家一起做完，才可开饭
+
+使用xEventGroupSync() 函数可以同步多个任务：
+
+- 可以设置某位、某些位，表示自己做了什么事
+- 可以等待某位、某些位，表示要等等其他任务
+- 期望的时间发生后， xEventGroupSync() 才会成功返回。
+- xEventGroupSync 成功返回后，会清除事件
+
+函数原型如下：
+
+```c 
+EventBits_t xEventGroupSync( EventGroupHandle_t xEventGroup,
+const EventBits_t uxBitsToSet,
+const EventBits_t uxBitsToWaitFor,
+TickType_t xTicksToWait );
+```
+
+参数列表如下：
+![](images/APi-2025-02-26-16-50-12.png)
+
+### 事件组使用
+
+#### 等待多事件
+
+添加事件组头文件
+```C 
+/* 1. 工程中添加event_groups.c */
+/* 2. 源码中包含头文件 */
+#include "event_groups.h"
+```
+
+main逻辑：
+![](images/APi-2025-02-26-16-52-11.png)
+
+制定三个任务：
+- A："炒菜任务"优先级最高，先执行。它要等待的2个事件未发生：洗菜、生火，进入阻塞状态
+- B："生火任务"接着执行，它要等待的1个事件未发生：洗菜，进入阻塞状态
+- C："洗菜任务"接着执行，它洗好菜，发出事件：洗菜，然后调用F等待"炒菜"事件
+- D："生火任务"等待的事件满足了，从B处继续执行，开始生火、发出"生火"事件
+- E："炒菜任务"等待的事件满足了，从A出继续执行，开始炒菜、发出"炒菜"事件
+- F："洗菜任务"等待的事件满足了，退出F、继续执行C
+![](images/APi-2025-02-26-16-54-13.png)
+
+结果：
+![](images/APi-2025-02-26-16-55-23.png)
+
+#### 事件同步 
+
+主逻辑：
+![](images/APi-2025-02-26-17-01-05.png)
+
+创建三个任务，功能类似：
+![](images/APi-2025-02-26-17-02-03.png)
+
+要点在于xEventGroupSync 函数，它有3个功能：
+- 设置事件：表示自己完成了某个、某些事件
+- 等待事件：跟别的任务同步
+- 成功返回后，清除"等待的事件"
+
+运行结果：
+![](images/APi-2025-02-26-17-05-02.png)
+
+## 十、任务通知 
+
+所谓"任务通知"，你可以反过来读"通知任务"。
+我们使用队列、信号量、事件组等等方法时，并不知道对方是谁。
+使用任务通知时，可以明确指定：通知哪个任务。
+
+使用队列、信号量、事件组时，我们都要事先创建对应的结构体，双方通过中间的结构体通信：
+![](images/APi-2025-02-27-16-36-56.png)
+
+使用任务通知时，任务结构体TCB中就包含了内部对象，可以直接接收别人发过来的"通知"：
+![](images/APi-2025-02-27-16-37-16.png)
+
+### 任务通知特性
+
+#### 优势和限制
+
+任务通知的优势：
+- 效率更高：
+  使用任务通知来发送事件、数据给某个任务时，效率更高。
+  比队列、信号量、事件组都有大的优势。
+- 更节省内存：
+  使用其他方法时都要先创建对应的结构体，使用任务通知时无需额外创建结构体。
+
+任务通知的限制：
+- 不能发送数据给ISR：
+  ISR并没有任务结构体，所以无法使用任务通知的功能给ISR发送数据。
+  但是ISR可以使用任务通知的功能，发数据给任务。
+- 数据只能给该任务独享
+  使用队列、信号量、事件组时，数据保存在这些结构体中，其他任务、ISR都可以访问这些数据。
+  使用任务通知时，数据存放入目标任务中，只有它可以访问这些数据。
+  在日常工作中，这个限制影响不大。
+  因为很多场合是从多个数据源把数据发给某个任务，而不是把一个数据源的数据发给多个任务。
+- 无法缓冲数据
+  使用队列时，假设队列深度为N，那么它可以保持N个数据。
+  使用任务通知时，任务结构体中只有一个任务通知值，只能保持一个数据。
+- 无法广播给多个任务
+  使用事件组可以同时给多个任务发送事件。
+  使用任务通知，只能发个一个任务。
+- 如果发送受阻，发送方无法进入阻塞状态等待 **(发送无阻塞但是接受有)**
+  假设队列已经满了，使用xQueueSendToBack() 给队列发送数据时，任务可以进入阻塞状态等待发送完成。
+  使用任务通知时，**即使对方无法接收数据，发送方也无法阻塞等待，只能即刻返回错误。**
+
+#### 通知状态和通知值
+
+每个任务都有一个结构体：TCB(Task Control Block)，里面有2个成员：
+- 一个是uint8_t类型，用来表示通知状态
+- 一个是uint32_t类型，用来表示通知值
+![](images/APi-2025-02-27-16-53-08.png)
+
+通知状态有3种取值：
+- taskNOT_WAITING_NOTIFICATION：任务没有在等待通知
+- taskWAITING_NOTIFICATION：任务在等待通知
+- taskNOTIFICATION_RECEIVED：任务接收到了通知，也被称为pending(有数据了，待处理)
+![](images/APi-2025-02-27-17-02-08.png)
+
+通知值可以有很多种类型：
+- 计数值
+- 位(类似事件组)
+- 任意数值
+
+### 任务通知使用
+
+使用任务通知，可以实现轻量级的队列(长度为1)、邮箱(覆盖的队列)、计数型信号量、二进制信号量、事件组。
+
+#### 两类函数
+
+任务通知有2套函数，简化版、专业版，列表如下：
+- 简化版函数的使用比较简单，它实际上也是使用专业版函数实现的
+- 专业版函数支持很多参数，可以实现很多功能
+
+|          | 简化版                                 | 专业版                         |
+| -------- | -------------------------------------- | ------------------------------ |
+| 发出通知 | xTaskNotifyGive vTaskNotifyGiveFromISR | xTaskNotify xTaskNotifyFromISR |
+| 取出通知 | ulTaskNotifyTake                       | xTaskNotifyWait                |
+
+--- 
+
+**xTaskNotifyGive/ulTaskNotifyTake**
+
+在任务中使用xTaskNotifyGive函数，在ISR中使用vTaskNotifyGiveFromISR函数，都是直接给其他任务发送通知：
+- 使得通知值加一
+- 并使得通知状态变为"pending"，也就是taskNOTIFICATION_RECEIVED ，表示有数据了、待处理
+
+可以使用ulTaskNotifyTake函数来取出通知值：
+- 如果通知值等于0，则阻塞(可以指定超时时间)
+- 当通知值大于0时，任务从阻塞态进入就绪态
+- 在ulTaskNotifyTake返回之前，还可以做些清理工作：
+  把通知值减一，或者把通知值清零
+  使用ulTaskNotifyTake函数可以实现轻量级的、高效的二进制信号量、计数型信号量。
+
+函数原型：
+```C 
+BaseType_t xTaskNotifyGive( TaskHandle_t xTaskToNotify );
+
+void vTaskNotifyGiveFromISR( TaskHandle_t xTaskHandle, BaseType_t *pxHigherPriorityTaskWoken );
+
+uint32_t ulTaskNotifyTake( BaseType_t xClearCountOnExit, TickType_t xTicksToWait);
+```
+参数说明：
+xTaskNotifyGive函数的参数说明如下：
+![](images/APi-2025-02-27-17-15-50.png)
+
+vTaskNotifyGiveFromISR函数的参数说明如下：
+![](images/APi-2025-02-27-17-16-53.png)
+
+ulTaskNotifyTake函数的参数说明如下：
+![](images/APi-2025-02-27-17-18-12.png)
+
+详细解释：
+- 等待通知：
+  ulTaskNotifyTake 会使调用任务进入阻塞状态，直到收到通知或超时。
+  xClearCountOnExit 参数决定了在函数返回时是否清除任务通知值。
+- 超时时间：
+  xTicksToWait 参数指定了等待通知的最大时间。如果在指定时间内没有收到通知，函数会返回 0。
+  使用 pdMS_TO_TICKS 宏可以将毫秒转换为系统节拍数。
+- 返回值：
+  返回值为任务通知值，表示在调用 ulTaskNotifyTake 时任务通知值的数量。
+  如果在超时时间内没有收到通知，返回值为 0。
+
+图解：
+![](images/APi-2025-02-28-09-31-25.png)
+--- 
+
+**xTaskNotify/xTaskNotifyWait**
+
+xTaskNotify 函数功能更强大，可以使用不同参数实现各类功能，比如：
+
+- 让接收任务的通知值加一：这时xTaskNotify() 等同于xTaskNotifyGive()
+- 设置接收任务的通知值的某一位、某些位，这就是一个轻量级的、更高效的事件组
+- 把一个新值写入接收任务的通知值：上一次的通知值被读走后，写入才成功。这就是轻量级的、长度为1的队列
+- 用一个新值覆盖接收任务的通知值：无论上一次的通知值是否被读走，覆盖都成功。类似xQueueOverwrite() 函数，这就是轻量级的邮箱。
+
+xTaskNotify() 比xTaskNotifyGive() 更灵活、强大，使用上也就更复杂。
+xTaskNotifyFromISR() 是它对应的ISR版本。
+
+这两个函数用来发出任务通知，使用哪个函数来取出任务通知呢？
+使用xTaskNotifyWait() 函数！它比ulTaskNotifyTake() 更复杂：
+- 可以让任务等待(可以加上超时时间)，等到任务状态为"pending"(也就是有数据)
+- 还可以在函数**进入、退出时，清除通知值的指定位**
+
+函数原型：
+```C 
+BaseType_t xTaskNotify( TaskHandle_t xTaskToNotify, 
+uint32_t ulValue, eNotifyAction eAction );
+
+BaseType_t xTaskNotifyFromISR( TaskHandle_t xTaskToNotify,
+uint32_t ulValue,
+eNotifyAction eAction,
+BaseType_t *pxHigherPriorityTaskWoken );
+
+BaseType_t xTaskNotifyWait( uint32_t ulBitsToClearOnEntry,
+uint32_t ulBitsToClearOnExit,
+uint32_t *pulNotificationValue,
+TickType_t xTicksToWait );
+```
+
+参数列表:
+xTaskNotify函数的参数
+![](images/APi-2025-02-28-09-26-15.png)
+
+eNotifyAction参数说明：
+| 取值                      | 说明                                                                                                                                                                                                                 |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| eNoAction                 | 仅仅是更新通知状态为"pending"，未使用ulValue。这个选项相当于轻量级的、更高效的二进制信号量。                                                                                                                         |
+| eSetBits                  | 通知值 = 原来的通知值                                                                                                                                           \| ulValue，按位或。相当于轻量级的、更高效的事件组。 |
+| eIncrement                | 通知值 = 原来的通知值 + 1，未使用ulValue。相当于轻量级的、更高效的二进制信号量、计数型信号量。相当于xTaskNotifyGive() 函数。                                                                                         |
+| eSetValueWithoutOverwrite | 不覆盖。如果通知状态为"pending"(表示有数据未读)，则此次调用xTaskNotify不做任何事，返回pdFAIL。如果通知状态不是"pending"(表示没有新数据)，则：通知值 = ulValue。                                                      |
+| eSetValueWithOverwrite    | 覆盖。无论如何，不管通知状态是否为"pendng"，通知值 = ulValue。                                                                                                                                                       |
+
+xTaskNotifyFromISR函数跟xTaskNotify很类似，就多了最后一个参数pxHigherPriorityTaskWoken 。
+在很多ISR函数中，这个参数的作用都是类似的，使用场景如下：
+
+- 被通知的任务，可能正处于阻塞状态
+- xTaskNotifyFromISR 函数发出通知后，会把接收任务从阻塞状态切换为就绪态
+- 如果被唤醒的任务的优先级，高于当前任务的优先级，"*pxHigherPriorityTaskWoken"被设置为pdTRUE，这表示在中断返回之前要进行任务切换。
+
+参数图解：
+![](images/APi-2025-02-28-09-33-47.png)
+
+xTaskNotifyWait函数列表：
+![](images/APi-2025-02-28-09-40-52.png)
+
+图解：
+![](images/APi-2025-02-28-09-41-53.png)
+
+### 任务通知实例
+
+#### 轻量级信号量
+
+可以使用任务通知实现轻量级的信号量，初始值为0，最小值也为0，不能指定初始值和最大值。
+
+对比图：
+![](images/APi-2025-02-28-09-47-02.png)
+
+Demo1：
+![](images/APi-2025-02-28-09-47-22.png)
+
+Demo2：
+main主逻辑：
+![](images/APi-2025-02-28-09-49-51.png)
+![](images/APi-2025-02-28-09-50-09.png)
+发送任务、接收任务的代码和执行流程如下：
+- A：发送任务优先级最高，先执行。连续存入3个字符、发出3次任务通知：通知值累加为3
+- B：发送任务阻塞，让接收任务能执行
+- C：接收任务读到通知值为3，并把通知值清零
+- D：把3个字符依次读出、打印
+- E：再次读取任务通知，阻塞
+
+结果如下：
+![](images/APi-2025-02-28-09-52-37.png)
+
+本程序使用xTaskNotifyGive/ulTaskNotifyTake 实现了轻量级的计数型信号量，代码更简单：
+- 无需创建信号量
+- 消耗内存更少
+- 效率更高
+
+信号量是个公开的资源，任何任务、ISR都可以使用它：可以释放、获取信号量。
+而本节程序中，发送任务只能给指定的任务发送通知，目标明确；接收任务只能从自己的通知值中得到数据，来源明确。
+
+#### 轻量级队列
+
+可以实现一个只能存放一个32位数据大小为1的队列。
+可以设置是否覆盖val或者不覆盖val
+![](images/APi-2025-02-28-09-54-27.png)
+
+函数对比：
+![](images/APi-2025-02-28-09-55-44.png)
+
+Demo1：
+![](images/APi-2025-02-28-09-57-02.png)
+
+Demo2：
+本节程序使用任务通知来传输任意数据，它创建2个任务：
+- 发送任务：把数据通过xTaskNotify() 发送给其他任务
+- 接收任务：使用xTaskNotifyWait 取出通知值，这表示字符，并打印出来
+
+主逻辑：
+![](images/APi-2025-02-28-09-57-59.png)
+
+![](images/APi-2025-02-28-09-58-55.png)
+执行流程：
+- A：发送任务优先级最高，先执行。连续给对方任务发送3个字符，只成功了1次
+- B：发送任务阻塞，让接收任务能执行
+- C：接收任务读取通知值
+- D：把读到的通知值作为字符打印出来
+- E：再次读取任务通知，阻塞
+
+结果：
+![](images/APi-2025-02-28-10-05-08.png)
+
+本程序使用xTaskNotify/xTaskNotifyWait 实现了轻量级的队列(该队列长度只有1)，代码更简单：
+- 无需创建队列
+- 消耗内存更少
+- 效率更高
+
+队列是个公开的资源，任何任务、ISR都可以使用它：可以存入数据、取出数据。
+而本节程序中，发送任务只能给指定的任务发送通知，目标明确；接收任务只能从自己的通知值中得到数据，来源明确。
+注意：任务通知值只有一个，数据可能丢失，设计程序时要考虑这点。
+
+#### 轻量级事件组
+
+事件中含有value可设置每一位对应每个事件：
+![](images/APi-2025-02-28-10-06-53.png)
+
+![](images/APi-2025-02-28-10-07-46.png)
+
+函数对比：
+![](images/APi-2025-02-28-10-09-01.png)
+
+Demo：
+Task1/Task2：
+![](images/APi-2025-02-28-10-10-06.png)
+![](images/APi-2025-02-28-10-11-10.png)
+
+结果：
+![](images/APi-2025-02-28-10-17-53.png)
+
+## 十一、软件定时器
+
+软件定时器就是"闹钟"，你可以设置闹钟，
+- 在30分钟后让你起床工作
+- 每隔1小时让你例行检查机器运行情况
+
+软件定时器也可以完成两类事情：
+- 在"未来"某个时间点，运行函数
+- 周期性地运行函数
+
+日常生活中我们可以定无数个"闹钟"，这无数的"闹钟"要基于一个真实的闹钟。
+在FreeRTOS里，我们也可以设置无数个"软件定时器"，它们都是基于系统滴答中断(Tick Interrupt)。
+
+本章涉及如下内容：
+- 软件定时器的特性
+- Daemon Task
+- 定时器命令队列
+- 一次性定时器、周期性定时器的差别
+- 怎么操作定时器：创建、启动、复位、修改周期
+
+### 软件定时器特性
+
+使用定时器跟使用手机闹钟是类似的：
+- 指定时间：启动定时器和运行回调函数，两者的间隔被称为定时器的周期(period)。
+- 指定类型，定时器有两种类型：
+  - 一次性(One-shot timers)：这类定时器启动后，它的回调函数只会被调用一次；可以手工再次启动它，但是不会自动启动它。
+  - 自动加载定时器(Auto-reload timers )：这类定时器启动后，时间到之后它会自动启动它；这使得回调函数被周期性地调用。
+- 指定要做什么事，就是指定回调函数
+
+实际的闹钟分为：有效、无效两类。软件定时器也是类似的，它由两种状态：
+- 运行(Running、Active)：运行态的定时器，当指定时间到达之后，它的回调函数会被调用
+- 冬眠(Dormant)：冬眠态的定时器还可以通过句柄来访问它，但是它不再运行，它的回调函数不会被调用
+
+定时器运行情况示例如下：
+- Timer1：它是一次性的定时器，在t1启动，周期是6个Tick。经过6个tick后，在t7执行回调函数。它的回调函数只会被执行一次，然后该定时器进入冬眠状态。
+- Timer2：它是自动加载的定时器，在t1启动，周期是5个Tick。每经过5个tick它的回调函数都被执行，比如在t6、t11、t16都会执行。
+
+图示：
+![](images/APi-2025-02-28-10-48-23.png)
+
+### 软件定时器上下文
+
+#### 守护任务
+
+FreeRTOS中有一个Tick中断，软件定时器基于Tick来运行。
+在哪里执行定时器函数？第一印象就是在Tick中断里执行：
+- 在Tick中断中判断定时器是否超时
+- 如果超时了，调用它的回调函数
+
+FreeRTOS是RTOS(实时操作系统)，它不允许在内核、在中断中执行不确定的代码：如果定时器函数很耗时，会影响整个系统。
+所以，FreeRTOS中，不在Tick中断中执行定时器函数。(Tick中断启用任务)
+
+在哪里执行？在某个任务里执行，这个任务就是：RTOS Damemon Task，RTOS守护任务。
+以前被称为"Timer server"，但是这个任务要做并不仅仅是定时器相关，所以改名为：RTOS Damemon Task。
+
+当FreeRTOS的配置项configUSE_TIMERS 被设置为1时，在启动调度器时，会自动创建RTOS Damemon Task。
+
+我们自己编写的任务函数要使用定时器时，是通过"**定时器命令队列**"(timer command queue)和守护任务交互，如下图：
+![](images/APi-2025-02-28-10-56-13.png)
+
+守护任务的优先级为：configTIMER_TASK_PRIORITY；
+定时器命令队列的长度为configTIMER_QUEUE_LENGTH。
+![](images/APi-2025-02-28-15-00-07.png)
+#### 守护任务的调度
+
+守护任务的调度，跟普通的任务并无差别。
+当守护任务是当前优先级最高的就绪态任务时，它就可以运行。它的工作有两类：
+- 处理命令：从命令队列里取出命令、处理
+- 执行定时器的回调函数
+
+能否及时处理定时器的命令、能否及时执行定时器的回调函数，严重依赖于守护任务的优先级。
+
+示例：守护任务的优先性级较低
+
+- t1：Task1处于运行态，守护任务处于阻塞态。
+  守护任务在这两种情况下会退出阻塞态切换为就绪态：命令队列中有数据、某个定时器超时了。
+  至于守护任务能否马上执行，取决于它的优先级。
+- t2：Task1调用xTimerStart()
+  要注意的是， xTimerStart() 只是把"start timer"的命令发给"定时器命令队列"，使得守护任务退出阻塞态。
+  在本例中，Task1的优先级高于守护任务，所以守护任务无法抢占Task1。
+- t3：Task1执行完xTimerStart()
+  但是定时器的启动工作由守护任务来实现，所以xTimerStart() 返回并不表示定时器已经被启动了。
+- t4：Task1由于某些原因进入阻塞态，现在轮到守护任务运行。
+  守护任务从队列中取出"start timer"命令，启动定时器。
+- t5：守护任务处理完队列中所有的命令，再次进入阻塞态。
+  Idel任务时优先级最高的就绪态任务，它执行。
+
+注意：假设定时器在后续某个时刻tX超时了，超时时间是"tX-t2"，而非"tX-t4"，**从xTimerStart() 函数被调用时算起**。
+定时器启动在t4，但是计时是从t2时刻。
+图解：
+![](images/APi-2025-02-28-11-03-13.png)
+
+示例：守护任务的优先性级较高
+
+- t1：Task1处于运行态，守护任务处于阻塞态。
+  守护任务在这两种情况下会退出阻塞态切换为就绪态：命令队列中有数据、某个定时器超时了。至于守护任务能否马上执行，取决于它的优先级。
+- t2：Task1调用xTimerStart()
+  要注意的是， xTimerStart() 只是把"start timer"的命令发给"定时器命令队列"，使得守护任务退出阻塞态。
+  在本例中，守护任务的优先级高于Task1，所以守护任务抢占Task1，守护任务开始处理命令队列。
+  Task1在执行xTimerStart() 的过程中被抢占，这时它无法完成此函数。
+- t3：守护任务处理完命令队列中所有的命令，再次进入阻塞态。
+  此时Task1是优先级最高的就绪态任务，它开始执行。
+- t4：Task1之前被守护任务抢占，对xTimerStart() 的调用尚未返回
+  现在开始继续运行次函数、返回。
+- t5：Task1由于某些原因进入阻塞态，进入阻塞态。
+  Idel任务时优先级最高的就绪态任务，它执行。
+
+注意，定时器的超时时间是基于调用xTimerStart() 的时刻tX，而不是基于守护任务处理命令的时刻tY。
+假设超时时间是10个Tick，超时时间是"tX+10"，而非"tY+10"。
+
+启动定时器后会定时检查是否超时，超时调用回调函数。
+![](images/APi-2025-02-28-11-15-51.png)
+
+综上所属：
+![](images/APi-2025-02-28-15-01-10.png)
+守护任务会同时管理多个定时器(创建的所有软件定时器，由守护任务管理)
+#### 回调函数
+
+定时器的回调函数的原型如下：
+```C
+void ATimerCallback( TimerHandle_t xTimer );
+```
+
+定时器的回调函数是在守护任务中被调用的，守护任务不是专为某个定时器服务的，它还要处理其他定时器。
+
+所以，定时器的回调函数不要影响其他人：
+- 回调函数要尽快实行，不能进入阻塞状态(**速度**)
+- 不要调用会导致阻塞的API函数，比如vTaskDelay() (**不阻塞**)
+- 可以调用xQueueReceive() 之类的函数，但是超时时间要设为0：即刻返回，不可阻塞
+
+### 软件定时器函数
+
+状态转化图：
+![](images/APi-2025-02-28-11-21-50.png)
+
+#### 创建
+要使用定时器，需要先创建它，得到它的句柄。
+有两种方法创建定时器：动态分配内存、静态分配内存。
+函数原型如下：
+```C 
+/* 使用动态分配内存的方法创建定时器
+* pcTimerName:定时器名字, 用处不大, 尽在调试时用到
+* xTimerPeriodInTicks: 周期, 以Tick为单位
+* uxAutoReload: 类型, pdTRUE表示自动加载, pdFALSE表示一次性
+* pvTimerID: 回调函数可以使用此参数, 比如分辨是哪个定时器
+* pxCallbackFunction: 回调函数
+* 返回值: 成功则返回TimerHandle_t, 否则返回NULL
+*/
+TimerHandle_t xTimerCreate( const char * const pcTimerName,
+const TickType_t xTimerPeriodInTicks,
+const UBaseType_t uxAutoReload,
+void * const pvTimerID,
+TimerCallbackFunction_t pxCallbackFunction );
+
+/* 使用静态分配内存的方法创建定时器
+* pcTimerName:定时器名字, 用处不大, 尽在调试时用到
+* xTimerPeriodInTicks: 周期, 以Tick为单位
+* uxAutoReload: 类型, pdTRUE表示自动加载, pdFALSE表示一次性
+* pvTimerID: 回调函数可以使用此参数, 比如分辨是哪个定时器
+* pxCallbackFunction: 回调函数
+* pxTimerBuffer: 传入一个StaticTimer_t结构体, 将在上面构造定时器
+* 返回值: 成功则返回TimerHandle_t, 否则返回NULL
+*/
+TimerHandle_t xTimerCreateStatic(const char * const pcTimerName,
+TickType_t xTimerPeriodInTicks,
+UBaseType_t uxAutoReload,
+void * pvTimerID,
+TimerCallbackFunction_t pxCallbackFunction,
+StaticTimer_t *pxTimerBuffer );
+```
+其中回调函数类型：
+```C 
+void ATimerCallback( TimerHandle_t xTimer );
+typedef void (* TimerCallbackFunction_t)( TimerHandle_t xTimer );
+```
+
+#### 删除
+
+动态分配的定时器，不再需要时可以删除掉以回收内存。
+删除函数原型如下：
+```C
+/* 删除定时器
+* xTimer: 要删除哪个定时器
+* xTicksToWait: 超时时间
+* 返回值: pdFAIL表示"删除命令"在xTicksToWait个Tick内无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerDelete( TimerHandle_t xTimer, TickType_t xTicksToWait );
+```
+
+定时器的很多API函数，都是通过发送"命令"到命令队列，由守护任务来实现。
+如果队列满了，"命令"就无法即刻写入队列。我们可以指定一个超时时间xTicksToWait ，等待一会。
+
+#### 启动停止
+
+启动定时器就是设置它的状态为运行态(Running、Active)。
+停止定时器就是设置它的状态为冬眠(Dormant)，让它不能运行。
+```C 
+/* 启动定时器
+* xTimer: 哪个定时器
+* xTicksToWait: 超时时间
+* 返回值: pdFAIL表示"启动命令"在xTicksToWait个Tick内无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerStart( TimerHandle_t xTimer, TickType_t xTicksToWait );
+
+/* 启动定时器(ISR版本)
+* xTimer: 哪个定时器
+* pxHigherPriorityTaskWoken: 向队列发出命令使得守护任务被唤醒,
+* 如果守护任务的优先级比当前任务的高,
+* 则"*pxHigherPriorityTaskWoken = pdTRUE",
+* 表示需要进行任务调度
+* 返回值: pdFAIL表示"启动命令"无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerStartFromISR( TimerHandle_t xTimer,
+BaseType_t *pxHigherPriorityTaskWoken );
+
+/* 停止定时器
+* xTimer: 哪个定时器
+* xTicksToWait: 超时时间
+* 返回值: pdFAIL表示"停止命令"在xTicksToWait个Tick内无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerStop( TimerHandle_t xTimer, TickType_t xTicksToWait );
+
+/* 停止定时器(ISR版本)
+* xTimer: 哪个定时器
+* pxHigherPriorityTaskWoken: 向队列发出命令使得守护任务被唤醒,
+* 如果守护任务的优先级比当前任务的高,
+* 则"*pxHigherPriorityTaskWoken = pdTRUE",
+* 表示需要进行任务调度
+* 返回值: pdFAIL表示"停止命令"无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerStopFromISR( TimerHandle_t xTimer,
+BaseType_t *pxHigherPriorityTaskWoken );
+```
+
+注意，这些函数的xTicksToWait 表示的是，把命令写入命令队列的超时时间。
+命令队列可能已经满了，无法马上把命令写入队列里，可以等待一会。
+xTicksToWait 不是定时器本身的超时时间，不是定时器本身的"周期"。
+创建定时器时，设置了它的周期(period)。
+xTimerStart() 函数是用来启动定时器。
+假设调用xTimerStart() 的时刻是tX，定时器的周期是n，那么在tX+n 时刻定时器的回调函数被调用。
+如果定时器已经被启动，但是它的函数尚未被执行，再次执行xTimerStart() 函数相当于执行xTimerReset() ，重新设定它的启动时间。
+
+#### 定时器复位
+
+从定时器的状态转换图可以知道，使用xTimerReset() 函数可以让定时器的状态从冬眠态转换为运行态，相当于使用xTimerStart() 函数。
+
+如果定时器已经处于运行态，使用xTimerReset() 函数就相当于重新确定超时时间。
+假设调用xTimerReset() 的时刻是tX，定时器的周期是n，那么tX+n 就是重新确定的超时时间。
+
+函数原型如下：
+```C 
+/* 复位定时器
+* xTimer: 哪个定时器
+* xTicksToWait: 超时时间
+* 返回值: pdFAIL表示"复位命令"在xTicksToWait个Tick内无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerReset( TimerHandle_t xTimer, TickType_t xTicksToWait );
+
+/* 复位定时器(ISR版本)
+* xTimer: 哪个定时器
+* pxHigherPriorityTaskWoken: 向队列发出命令使得守护任务被唤醒,
+* 如果守护任务的优先级比当前任务的高,
+* 则"*pxHigherPriorityTaskWoken = pdTRUE",
+* 表示需要进行任务调度
+* 返回值: pdFAIL表示"停止命令"无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerResetFromISR( TimerHandle_t xTimer,BaseType_t *pxHigherPriorityTaskWoken );
+```
+
+#### 周期修改
+
+从定时器的状态转换图可以知道，使用xTimerChangePeriod() 函数，处理能修改它的周期外，还可以**让定时器的状态从冬眠态转换为运行态**。
+修改定时器的周期时，会使用新的周期重新计算它的超时时间。
+假设调用xTimerChangePeriod() 函数的时间tX，新的周期是n，则tX+n 就是新的超时时间。
+
+函数原型如下：
+```C 
+/* 修改定时器的周期
+* xTimer: 哪个定时器
+* xNewPeriod: 新周期
+* xTicksToWait: 超时时间, 命令写入队列的超时时间
+* 返回值: pdFAIL表示"修改周期命令"在xTicksToWait个Tick内无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerChangePeriod( TimerHandle_t xTimer,
+TickType_t xNewPeriod,
+TickType_t xTicksToWait );
+
+/* 修改定时器的周期
+* xTimer: 哪个定时器
+* xNewPeriod: 新周期
+* pxHigherPriorityTaskWoken: 向队列发出命令使得守护任务被唤醒,
+* 如果守护任务的优先级比当前任务的高,
+* 则"*pxHigherPriorityTaskWoken = pdTRUE",
+* 表示需要进行任务调度
+* 返回值: pdFAIL表示"修改周期命令"在xTicksToWait个Tick内无法写入队列
+* pdPASS表示成功
+*/
+BaseType_t xTimerChangePeriodFromISR( TimerHandle_t xTimer,
+TickType_t xNewPeriod,
+BaseType_t *pxHigherPriorityTaskWoken );
+```
+
+#### 定时器ID
+
+定时器的结构体如下，里面有一项pvTimerID ，它就是定时器ID：
+
+![](images/APi-2025-02-28-14-55-01.png)
+
+怎么使用定时器ID，完全由程序来决定：
+- 可以用来标记定时器，表示自己是什么定时器
+- 可以用来保存参数，给回调函数使用
+
+它的初始值在创建定时器时由xTimerCreate() 这类函数传入，后续可以使用这些函数来操作：
+- 更新ID：使用vTimerSetTimerID() 函数
+- 查询ID：查询pvTimerGetTimerID() 函数
+
+注意：**这两个函数不涉及命令队列，它们是直接操作定时器结构体。**
+
+函数原型如下：
+```C 
+/* 获得定时器的ID
+* xTimer: 哪个定时器
+* 返回值: 定时器的ID
+*/
+void *pvTimerGetTimerID( TimerHandle_t xTimer );
+/* 设置定时器的ID
+* xTimer: 哪个定时器
+* pvNewID: 新ID
+* 返回值: 无
+*/
+void vTimerSetTimerID( TimerHandle_t xTimer, void *pvNewID );
+```
+
+### 软件定时器使用
+
+#### 常规使用
+
+使用软件定时器的准备操作：
+![](images/APi-2025-02-28-15-04-18.png)
+
+创建定时器：
+main逻辑：
+![](images/APi-2025-02-28-15-06-07.png)
+![](images/APi-2025-02-28-15-06-16.png)
+
+回调函数：
+![](images/APi-2025-02-28-15-06-42.png)
+
+结果展示：
+![](images/APi-2025-02-28-15-06-51.png)
+![](images/APi-2025-02-28-15-07-29.png)
+
+#### 软件定时器消抖
+
+在嵌入式开发中，我们使用机械开关时经常碰到抖动问题：引脚电平在短时间内反复变化。
+怎么读到确定的按键状态？
+- 连续读很多次，直到数值稳定：浪费CPU资源
+- 使用定时器：要结合中断来使用
+
+对于第2种方法，处理方法如下图所示，按下按键后：
+- 在t1产生中断，这时不马上确定按键，而是复位定时器，假设周期时20ms，超时时间为"t1+20ms"
+- 由于抖动，在t2再次产生中断，再次复位定时器，超时时间变为"t2+20ms"
+- 由于抖动，在t3再次产生中断，再次复位定时器，超时时间变为"t3+20ms"
+- 在"t3+20ms"处，按键已经稳定，读取按键值
+
+图解：
+![](images/APi-2025-02-28-15-10-35.png)
+
+main函数中创建了一个一次性的定时器，从来处理抖动；
+创建了一个任务，用来模拟产生抖动。
+代码如下：
+```C 
+static void vKeyFilteringTimerFunc( TimerHandle_t xTimer );//按键消抖
+void vEmulateKeyTask( void *pvParameters );//按键抖动模拟
+static TimerHandle_t xKeyFilteringTimer;//定时器句柄
+
+#define KEY_FILTERING_PERIOD pdMS_TO_TICKS( 20 ) //延迟20ms
+
+int main( void ){
+    prvSetupHardware();
+    xKeyFilteringTimer = xTimerCreate(
+        "KeyFiltering", /* 名字, 不重要 */
+        KEY_FILTERING_PERIOD, /* 周期 */
+        pdFALSE, /* 一次性 */
+        0, /* ID */
+        vKeyFilteringTimerFunc /* 回调函数 */
+    );
+    /* 在这个任务中多次调用xTimerReset来模拟按键抖动 */
+    xTaskCreate( vEmulateKeyTask, "EmulateKey", 1000, NULL, 1, NULL );
+    /* 启动调度器 */
+    vTaskStartScheduler();
+    /* 如果程序运行到了这里就表示出错了, 一般是内存不足 */
+    return 0;
+}
+```
+模拟产生按键:
+```C 
+void vEmulateKeyTask( void *pvParameters )
+{
+    int cnt = 0;
+    const TickType_t xDelayTicks = pdMS_TO_TICKS( 200UL );
+    for( ;; )
+    {
+    /* 模拟按键抖动, 多次调用xTimerReset */
+    xTimerReset(xKeyFilteringTimer, 0); cnt++;
+    xTimerReset(xKeyFilteringTimer, 0); cnt++;
+    xTimerReset(xKeyFilteringTimer, 0); cnt++;
+    printf("Key jitters %d\r\n", cnt);
+    vTaskDelay(xDelayTicks);
+    }
+}
+```
+回调函数：表示值稳定，确实摁下
+```C 
+static void vKeyFilteringTimerFunc( TimerHandle_t xTimer )
+{
+    static int cnt = 0;
+    printf("vKeyFilteringTimerFunc %d\r\n", cnt++);
+}
+```
+结果：
+![](images/APi-2025-02-28-15-16-38.png)
+
+
+实际上常常配合EXIT中断使用：
+中断配置：
+![](images/APi-2025-02-28-15-18-07.png)
+中断处理中：
+![](images/APi-2025-02-28-15-18-39.png)
+回调函数：
+![](images/APi-2025-02-28-15-18-55.png)
+
+## 十二、中断管理
+
+在RTOS中，需要应对各类事件。这些事件很多时候是通过硬件中断产生，怎么处理中断呢？
+
+假设当前系统正在运行Task1时，用户按下了按键，触发了按键中断。这个中断的处理流程如下：
+- CPU跳到固定地址去执行代码，这个固定地址通常被称为中断向量，这个跳转时硬件实现的
+- 执行代码做什么？
+  保存现场：Task1被打断，需要先保存Task1的运行环境，比如各类寄存器的值
+  分辨中断：调用处理函数(这个函数就被称为ISR，interrupt service routine)
+  恢复现场：继续运行Task1，或者运行其他优先级更高的任务
+
+注意到，**ISR是在内核中被调用的**，ISR执行过程中，用户的任务无法执行。
+ISR要尽量快，否则：
+- 其他低优先级的中断无法被处理：实时性无法保证
+- 用户任务无法被执行：系统显得很卡顿
+
+如果这个硬件中断的处理，就是非常耗费时间呢？
+对于这类中断的处理就要分为2部分：
+- ISR：尽快做些清理、记录工作，然后触发某个任务
+- 任务：更复杂的事情放在任务中处理
+所以，需要ISR和任务之间进行通信
+
+要在FreeRTOS中熟练使用中断，有几个原则要先说明：
+- FreeRTOS把任务认为是硬件无关的，任务的优先级由程序员决定，任务何时运行由调度器决定
+- ISR虽然也是使用软件实现的，但是它被认为是硬件特性的一部分，因为它跟硬件密切相关
+  - **何时执行？由硬件决定**
+  - **哪个ISR被执行？由硬件决定**
+- ISR的优先级高于任务：即使是优先级最低的中断，它的优先级也高于任务。任务只有在没有中断的情况下，才能执行。
+
+本章涉及如下内容：
+- FreeRTOS的哪些API函数能在ISR中使用
+- 怎么把中断的处理分为两部分：ISR、任务
+- ISR和任务之间的通信
+
+### 两套API函数
+
+#### 原因
+
+在任务函数中，我们可以调用各类API函数，比如队列操作函数：xQueueSendToBack。
+但是在ISR中使用这个函数会导致问题，应该使用另一个函数：xQueueSendToBackFromISR，它的函数名含有后缀"FromISR"，表示"从ISR中给队列发送数据"。
+
+FreeRTOS中很多API函数都有两套：一套在任务中使用，另一套在ISR中使用。
+后者的函数名含有"FromISR"后缀。
+
+为什么要引入两套API函数？
+- 很多API函数会导致任务计入阻塞状态：
+  - 运行这个函数的任务进入阻塞状态
+  - 比如写队列时，如果队列已满，可以进入阻塞状态等待一会
+- ISR调用API函数时，ISR不是"任务"，ISR不能进入阻塞状态(**中断执行尽可能快**)
+- 在任务中、在ISR中，这些函数的功能是有差别的
+  
+为什么不使用同一套函数，比如在函数里面分辨当前调用者是任务还是ISR呢？
+示例代码如下：
+![](images/APi-2025-02-28-15-27-16.png)
+
+FreeRTOS使用两套函数，而不是使用一套函数，是因为有如下好处：
+- 使用同一套函数的话，需要增加额外的判断代码、增加额外的分支，是的函数更长、更复杂、难以测试。
+- 在任务、ISR中调用时，需要的参数不一样，比如：
+  - 在任务中调用：需要指定超时时间，表示如果不成功就阻塞一会
+  - 在ISR中调用：不需要指定超时时间，无论是否成功都要即刻返回
+  - 如果强行把两套函数揉在一起，会导致参数臃肿、无效
+- 移植FreeRTOS时，还需要提供监测上下文的函数，比如is_in_isr()
+- 有些处理器架构没有办法轻易分辨当前是处于任务中，还是处于ISR中，就需要额外添加更多、更复杂的代码
+
+使用两套函数可以让程序更高效，但是也有一些缺点，比如你要使用第三方库函数时，即会在任务中调用它，也会在ISR总调用它。
+这个第三方库函数用到了FreeRTOS的API函数，你无法修改库函数。
+这个问题可以解决：
+- 把中断的处理推迟到任务中进行(Defer interrupt processing)，在任务中调用库函数
+- 尝试在库函数中使用"FromISR"函数：
+  - 在任务中、在ISR中都可以调用"FromISR"函数
+  - 反过来就不行，非FromISR函数无法在ISR中使用
+- 第三方库函数也许会提供OS抽象层，自行判断当前环境是在任务还是在ISR中，分别调用不同的函数
+
+#### 两套API列表
+
+![](images/APi-2025-02-28-15-31-30.png)
+![](images/APi-2025-02-28-15-31-42.png)
+
+![](images/APi-2025-02-28-15-32-34.png)
+中断比任何任务的优先级都高
+ISR需要记录是否发生调度，并自行发起调度(可以由程序员设置)
+
+#### xHigherPriorityTaskWoken参数
+
+xHigherPriorityTaskWoken的含义是：是否有更高优先级的任务被唤醒了。
+如果为pdTRUE，则意味着后面要进行任务切换。
+
+以写队列为例：
+任务A调用xQueueSendToBack() 写队列，有几种情况发生：
+- 队列满了，任务A阻塞等待，另一个任务B运行
+- 队列没满，任务A成功写入队列，但是它导致另一个任务B被唤醒，任务B的优先级更高：任务B先运行
+- 队列没满，任务A成功写入队列，即刻返回
+
+可以看到，在任务中调用API函数可能导致任务阻塞、任务切换，这叫做**context switch，上下文切换**。
+这个函数可能很长时间才返回，在函数的内部实现了任务切换。
+
+xQueueSendToBackFromISR() 函数也可能导致任务切换，但是不会在函数内部进行切换，而是返回一个参数：表示是否需要切换。
+函数原型与用法如下：
+
+![](images/APi-2025-02-28-15-38-28.png)
+程序员自行调用任务切换的程序。
+
+pxHigherPriorityTaskWoken参数，就是用来保存函数的结果：是否需要切换
+- *pxHigherPriorityTaskWoken等于pdTRUE：函数的操作导致更高优先级的任务就绪了，ISR应该进行任务切换
+- *pxHigherPriorityTaskWoken等于pdFALSE：没有进行任务切换的必要
+
+为什么不在"FromISR"函数内部进行任务切换，而只是标记一下而已呢？为了效率！
+![](images/APi-2025-02-28-15-39-37.png)
+
+ISR中有可能多次调用"FromISR"函数，如果在"FromISR"内部进行任务切换，会浪费时间。
+解决方法是：
+- 在"FromISR"中标记是否需要切换
+- 在ISR返回之前再进行任务切换
+
+示例代码如下：
+![](images/APi-2025-02-28-15-40-18.png)
+
+上述的例子很常见，比如UART中断：在UART的ISR中读取多个字符，发现收到回车符时才进行任务切换。
+
+在ISR中调用API时不进行任务切换，而只是在"xHigherPriorityTaskWoken"中标记一下，除了效率，还有多种好处：
+
+- 效率高：避免不必要的任务切换
+- 让ISR更可控：中断随机产生，在API中进行任务切换的话，可能导致问题更复杂
+- 可移植性
+- 在Tick中断中，调用vApplicationTickHook() ：它运行与ISR，只能使用"FromISR"的函数
+
+使用"FromISR"函数时，如果不想使用xHigherPriorityTaskWoken参数，可以设置为NULL。
+
+#### 切换任务
+
+FreeRTOS的ISR函数中，使用两个宏进行任务切换：
+
+```C 
+portEND_SWITCHING_ISR( xHigherPriorityTaskWoken );
+portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+```
+这两个宏做的事情是完全一样的，在老版本的FreeRTOS中，
+- portEND_SWITCHING_ISR 使用汇编实现
+- portYIELD_FROM_ISR 使用C语言实现
+新版本都统一使用portYIELD_FROM_ISR
+
+![](images/APi-2025-02-28-15-45-13.png)
+
+注意：这是在中断中发起任务调度。
+在任务中可以使用taskyield()
+
+### 中断延迟处理
+
+前面讲过，ISR要尽量快，否则：
+- 其他低优先级的中断无法被处理：实时性无法保证
+- 用户任务无法被执行：系统显得很卡顿
+- 如果运行中断嵌套，这会更复杂，ISR越快执行约有助于中断嵌套
+
+如果这个硬件中断的处理，就是非常耗费时间呢？
+对于这类中断的处理就要分为2部分：
+- ISR：尽快做些清理、记录工作，然后触发某个任务
+- 任务：更复杂的事情放在任务中处理
+
+这种处理方式叫"中断的延迟处理"(Deferring interrupt processing)，处理流程如下图所示：
+![](images/APi-2025-02-28-15-49-18.png)
+
+- t1：任务1运行，任务2阻塞
+- t2：发生中断，
+  - 该中断的ISR函数被执行，任务1被打断
+  - ISR函数要尽快能快速地运行，它做一些必要的操作(比如清除中断)，然后唤醒任务2
+- t3：在创建任务时设置任务2的优先级比任务1高(这取决于设计者)，所以ISR返回后，运行的是任务2，它要完成中断的处理。任务2就被称为"deferred processing task"，中断的延迟处理任务。
+- t4：任务2处理完中断后，进入阻塞态以等待下一个中断，任务1重新运行
+
+**中断的延迟任务处理**
+
+### 中断任务通信
+
+前面讲解过的队列、信号量、互斥量、事件组、任务通知等等方法，都可使用。
+要注意的是，在ISR中使用的函数要有"FromISR"后缀。
+
+## 十三、资源管理
+
+在前面讲解互斥量时，引入过临界资源的概念。
+在前面课程里，已经实现了临界资源的互斥访问。
+本章节的内容比较少，只是引入两个功能：
+- 屏蔽/使能中断
+- 暂停/恢复调度器。
+
+要独占式地访问临界资源，有3种方法：(内核临界资源常常需要原子访问)
+- 公平竞争：比如使用互斥量，谁先获得互斥量谁就访问临界资源，这部分内容前面讲过。
+- 谁要跟我抢，我就灭掉谁：
+  - 中断要跟我抢？我屏蔽中断
+  - 其他任务要跟我抢？我禁止调度器，不运行任务切换
+
+### 屏蔽中断
+
+屏蔽中断有两套宏：任务中使用、ISR中使用：
+- 任务中使用： taskENTER_CRITICA()/taskEXIT_CRITICAL()
+- ISR中使用： taskENTER_CRITICAL_FROM_ISR()/taskEXIT_CRITICAL_FROM_ISR()
+
+---
+
+任务中屏蔽中断：
+```C 
+/* 在任务中，当前时刻中断是使能的
+ * 执行这句代码后，屏蔽中断
+ */
+taskENTER_CRITICAL();
+/* 访问临界资源 */
+
+/* 重新使能中断 */
+taskEXIT_CRITICAL();
+```
+
+在taskENTER_CRITICA()/taskEXIT_CRITICAL() 之间：
+- 低优先级的中断被屏蔽了：
+  优先级低于、等于configMAX_SYSCALL_INTERRUPT_PRIORITY
+- 高优先级的中断可以产生：
+  优先级高于configMAX_SYSCALL_INTERRUPT_PRIORITY
+  但是，这些中断ISR里，不允许使用FreeRTOS的API函数
+- 任务调度依赖于中断、依赖于API函数，所以：这两段代码之间，不会有任务调度产生
+
+configMAX_SYSCALL_INTERRUPT_PRIORITY 定义了可以调用 FreeRTOS API 函数的最高中断优先级。
+任何优先级高于 configMAX_SYSCALL_INTERRUPT_PRIORITY 的中断都不能调用 FreeRTOS 的 API 函数。
+这些高优先级中断通常用于处理时间关键的任务，因为它们不会被 FreeRTOS 的内核中断。
+
+这套taskENTER_CRITICA()/taskEXIT_CRITICAL() 宏，是可以递归使用的，它的内部会记录嵌套的深度，只有嵌套深度变为0时，调用taskEXIT_CRITICAL() 才会重新使能中断。
+
+使用taskENTER_CRITICA()/taskEXIT_CRITICAL() 来访问临界资源是很粗鲁的方法：
+- 中断无法正常运行
+- 任务调度无法进行
+所以，之间的代码要尽可能快速地执行
+
+---
+
+ISR中屏蔽中断
+![](images/APi-2025-02-28-16-04-51.png)
+
+1. 屏蔽中断：
+   - 在 ISR 中，有时需要屏蔽其他中断，以确保当前中断处理过程不被打断。
+   - 屏蔽中断可以通过设置中断屏蔽寄存器或使用特定的函数来实现。
+2. 记录返回值：
+   - 屏蔽中断时，通常会返回一个值，该值表示中断屏蔽寄存器的原始状态。
+   - 记录这个返回值是为了在 ISR 结束后能够恢复中断的原始状态。
+3. 恢复中断：
+   - 在 ISR 结束时，需要使用记录的返回值来恢复中断屏蔽寄存器的原始状态。
+   - 这样可以确保在 ISR 执行期间屏蔽的中断能够正确恢复，不会影响系统的正常运行。
+
+在taskENTER_CRITICA_FROM_ISR()/taskEXIT_CRITICAL_FROM_ISR() 之间：
+- 低优先级的中断被屏蔽了：
+  优先级低于、等于configMAX_SYSCALL_INTERRUPT_PRIORITY
+- 高优先级的中断可以产生：
+  优先级高于configMAX_SYSCALL_INTERRUPT_PRIORITY
+  但是，这些中断ISR里，不允许使用FreeRTOS的API函数
+- 任务调度依赖于中断、依赖于API函数，所以：这两段代码之间，不会有任务调度产生
+
+![](images/APi-2025-02-28-16-27-30.png)
+注意任务优先级是越大优先级越高，中断是越小优先级越高。
+
+### 暂停调度器
+
+如果有别的任务来跟你竞争临界资源，你可以把中断关掉：这当然可以禁止别的任务运行，但是这代价太大了。它会影响到中断的处理。
+如果只是禁止别的任务来跟你竞争，不需要关中断，暂停调度器就可以了：在这期间，中断还是可以发生、处理。
+
+暂停一个任务，唤醒一个任务：
+vTaskSuspend()
+![](images/APi-2025-02-28-16-15-02.png)
+vTaskResume()
+![](images/APi-2025-02-28-16-22-32.png)
+
+暂停所有任务调度，唤醒所有任务：
+![](images/APi-2025-02-28-16-23-13.png)
+
+这套vTaskSuspendScheduler()/xTaskResumeScheduler() 宏，是可以递归使用的，它的内部会记录嵌套的深度，只有嵌套深度变为0时，才能重新启用。
+uxSchedulerSuspended可以记录嵌套的层数。
+
+## 十四、调试
+
+FreeRTOS提供了多种调式手段：
+- 打印
+- 断言
+- Trace
+- Hook回调
+
+### 打印：
+FreeRTOS工程中使用了microlib，里面实现了printf
+我们只需实现一下函数即可使用printf：
+```C
+int fputc(int ch,FILE *f);
+```
+
+### 断言：
+一般的C库里面，断言就是一个函数：
+```C 
+void assert(scalar expression);
+```
+它的作用是：确认 expression 必须为真，如果 expression 为假的话就中止程序。
+
+在FreeRTOS里，使用configASSERT()，比如：
+```C 
+#define configASSERT(x) if (!x) while(1);
+```
+也可以让他提供更多信息：
+```C
+#define configASSERT(x) \
+if (!x) \
+{
+printf("%s %s %d\r\n", __FILE__, __FUNCTION__, __LINE__); \
+while(1); \
+}
+```
+configASSERT(x)中，如果x为假，表示发生了很严重的错误，必须停止系统的运行。
+它用在很多场合，比如：
+![](images/APi-2025-02-28-16-39-23.png)
+
+![](images/APi-2025-02-28-16-39-46.png)
+
+### Trace
+
+FreeRTOS 中定义了很多 trace 开头的宏，这些宏被放在系统个关键位置。
+它们一般都是空的宏，这不会影响代码：不影响编程处理的程序大小、不影响运行时间。
+我们要调试某些功能时，可以修改宏：修改某些标记变量、打印信息等待。
+
+![](images/APi-2025-02-28-16-44-00.png)
+![](images/APi-2025-02-28-16-44-14.png)
+![](images/APi-2025-02-28-16-44-26.png)
+![](images/APi-2025-02-28-16-44-37.png)
+![](images/APi-2025-02-28-16-44-44.png)
+![](images/APi-2025-02-28-16-44-54.png)
+![](images/APi-2025-02-28-16-45-06.png)
+![](images/APi-2025-02-28-16-45-22.png)
+![](images/APi-2025-02-28-16-45-37.png)
+
+### Hook函数
+
+#### Malloc Hook函数
+
+编程时，一般的逻辑错误都容易解决。
+难以处理的是内存越界、栈溢出等。
+内存越界经常发生在堆的使用过程总：堆，就是使用malloc得到的内存。
+并没有很好的方法检测内存越界，但是可以提供一些回调函数：
+
+使用 pvPortMalloc 失败时，如果在 FreeRTOSConfig.h 里配置
+configUSE_MALLOC_FAILED_HOOK 为 1，会调用：
+```C
+void vApplicationMallocFailedHook( void );
+```
+可以用这个回调函数实现打印错误信息
+
+#### 栈溢出Hook函数
+
+在切换任务(vTaskSwitchContext)时调用 taskCHECK_FOR_STACK_OVERFLOW 来检测栈是否溢出，如果溢出会调用：
+```C 
+void vApplicationStackOverflowHook( TaskHandle_t xTask, char * pcTaskName );
+```
+可以用这个回调函数实现打印错误信息
+
+怎么判断栈溢出？有两种方法：
+
+**方法1：**
+◼ 当前任务被切换出去之前，它的整个运行现场都被保存在栈里，这时很可能就是它对栈的使用到达了峰值。
+◼ 这方法很高效，但是并不精确
+◼ 比如：任务在运行过程中调用了函数 A 大量地使用了栈，调用完函数 A 后才被调度。
+
+**方法2：**
+
+◼ 创建任务时，它的栈被填入固定的值，比如：0xa5
+◼ 检测栈里最后 16 字节的数据，如果不是 0xa5 的话表示栈即将、或者已经被用完了
+◼ 没有方法 1 快速，但是也足够快
+◼ 能捕获几乎所有的栈溢出
+
+为什么是几乎所有？可能有些函数使用栈时，非常凑巧地把栈设置为 0xa5：几乎不可能
+
+## 十五、优化
+
+在 Windows 中，当系统卡顿时我们可以查看任务管理器找到最消耗 CPU 资源的程序。
+在FreeRTOS中，我们也可以查看任务使用CPU的情况、使用栈的情况，然后针对性地进
+行优化。这就是查看"任务的统计"信息。
+
+### 栈使用情况
+
+在创建任务时分配了栈，可以填入固定的数值比如 0xa5，以后可以使用以下函数查看"栈的高水位"，也就是还有多少空余的栈空间：
+```C 
+UBaseType_t uxTaskGetStackHighWaterMark( TaskHandle_t xTask );
+```
+原理是：从栈底往栈顶逐个字节地判断，它们的值持续是 0xa5 就表示它是空闲的。
+
+参数说明：
+![](images/APi-2025-02-28-16-56-27.png)
+
+### 运行时间统计
+
+对于同优先级的任务，它们按照时间片轮流运行：你执行一个 Tick，我执行一个 Tick。
+是否可以在Tick中断函数中，统计当前任务的累计运行时间？
+不行！很不精确，因为有更高优先级的任务就绪时，当前任务还没运行一个完整的Tick就被抢占了。
+
+我们需要比Tick更快的时钟，比如Tick周期时1ms，我们可以使用另一个定时器，让它
+发生中断的周期时0.1ms甚至更短。
+使用这个定时器来衡量一个任务的运行时间，原理如下图所示：
+![](images/APi-2025-02-28-16-58-01.png)
+
+![](images/APi-2025-02-28-16-58-25.png)
+在上下文切换函数中，使用更快的定时器统计运行时间。
+代码：
+配置：
+```C
+#define configGENERATE_RUN_TIME_STATS 1
+#define configUSE_TRACE_FACILITY 1
+#define configUSE_STATS_FORMATTING_FUNCTIONS 1
+```
+实现宏 portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()，它用来
+初始化更快的定时器
+
+实现这两个宏之一，它们用来返回当前时钟值(更快的定时器)
+◼ portGET_RUN_TIME_COUNTER_VALUE()：直接返回时钟值
+◼ portALT_GET_RUN_TIME_COUNTER_VALUE(Time)：设置 Time 变量等于时钟值
+
+代码执行流程：
+⚫ 初始化更快的定时器：启动调度器时
+![](images/APi-2025-02-28-17-01-59.png)
+在任务切换时统计运行时间
+![](images/APi-2025-02-28-17-02-17.png)
+⚫ 获得统计信息，可以使用下列函数
+◼ uxTaskGetSystemState：对于每个任务它的统计信息都放在一个 TaskStatus_t结构体里
+◼ vTaskList：得到的信息是可读的字符串，比如
+◼ vTaskGetRunTimeStats： 得到的信息是可读的字符串
+
+### 统计信息函数说明
+
+uxTaskGetSystemState：获得任务的统计信息
+```C
+UBaseType_t uxTaskGetSystemState( TaskStatus_t * const pxTaskStatusArray,
+const UBaseType_t uxArraySize,
+uint32_t * const pulTotalRunTime );
+```
+![](images/APi-2025-02-28-17-03-56.png)
+
+vTaskList ：获得任务的统计信息，形式为可读的字符串。
+注意，pcWriteBuffer 必须足够大。
+```C
+void vTaskList( signed char *pcWriteBuffer );
+```
+
+可读信息格式如下：
+![](images/APi-2025-02-28-17-05-49.png)
+
+vTaskGetRunTimeStats：获得任务的运行信息，形式为可读的字符串。
+注意，pcWriteBuffer 必须足够大。
+```C
+void vTaskGetRunTimeStats( signed char *pcWriteBuffer );
+```
+
+可读信息如下：
+![](images/APi-2025-02-28-17-06-50.png)
