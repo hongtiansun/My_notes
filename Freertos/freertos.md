@@ -2580,6 +2580,7 @@ ulTaskNotifyTake函数的参数说明如下：
 
 图解：
 ![](images/APi-2025-02-28-09-31-25.png)
+
 --- 
 
 **xTaskNotify/xTaskNotifyWait**
