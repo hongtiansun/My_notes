@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>&#x7cbe;&#x901a;Linux</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css">
+<link href="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.css" rel="stylesheet" type="text/css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="精通linux">精通Linux</h1>
+<h2 id="第一章-概述">第一章 概述</h2>
+<h3 id="11-linux操作系统中的抽象级别和层次">1.1 Linux操作系统中的抽象级别和层次</h3>
+<p>在组织得当的前提下，通过抽象将系统分解为组件有助于我们了解其工作机制。
+我们将组件划分为层次或级别。组件的层次（或级别）代表它在用户和硬件系统之间所处的位置。
+Web浏览器、游戏等应用处于最高层，底层则是计算机硬件系统，如内存。操作系统处于这两层之间。</p>
+<p>Linux操作系统主要分为三层。
+<img src="file:///f:\Windows NEW\My_notes\My_notes\Linux\精通Linux\images\APi-2025-03-08-09-11-46.png" alt=""></p>
+<p><strong>硬件系统：</strong>
+如图1-1所示，最底层是硬件系统，包括内存和中央处理器（用于计算和从内存中读写数据），此外硬盘和网络接口也是硬件系统的一部分。</p>
+<p><strong>Linux内核：</strong>
+硬件系统之上是内核，它是操作系统的核心。内核是运行在内存中的软件，它向中央处理器发送指令。
+内核管理硬件系统，是硬件系统和应用程序之间进行通信的接口。</p>
+<p><strong>用户进程：</strong>
+进程是指计算机中运行的所有程序，由内核统一管理，它们组成了最顶层，称为用户空间。</p>
+<p><strong>内核空间和用户空间：</strong>
+内核和用户进程之间最主要的区别是：
+内核在内核模式(kernel mode)中运行，而用户进程则在用户模式（user mode）中运行。</p>
+<p>在内核模式中运行的代码可以不受限地访问中央处理器和内存，这种模式功能强大，但也非常危险，因为内核进程可以轻而易举地使整个系统崩溃。那些只有内核可以访问的空间我们称为内核空间（kernel space）。</p>
+<p>相对于内核模式，用户模式对内存和中央处理器的访问有一定程度的限制，可访问的内存空间通常很小，对CPU的操作也很安全。用户空间指的是那些用户进程能够访问的内存空间。如果一个用户进程出错并崩溃的话，其导致的后果也相对有限，并且能够被内核清理掉。例如，如果你的Web浏览器崩溃了，不会影响到你正在运行的其他程序。</p>
+<p>理论上来说，一个用户进程出问题并不会对整个系统造成严重的影响。
+当然这取决于我们如何定义“严重的影响”，并且还取决于该进程拥有的权限。因为不同的进程拥有的权限可能不同，一些进程能够执行一些别的进程无权执行的操作.</p>
+<h3 id="12-硬件系统">1.2 硬件系统</h3>
+<p><strong>主内存：</strong></p>
+<p>基本上来讲，主内存存储0和1这样的数据。我们将每个0和1称为一个比特（或位，bit）。内核和进程就在主内存中运行，它们就是一系列比特的大合集。
+所有外围设备的数据输入和输出都通过主内存完成，同样是以一系列0和1的形式。
+中央处理器像一个操作员一样处理内存中的数据，它从内存读取指令和数据，然后将运算结果写回内存。</p>
+<p><strong>状态：</strong></p>
+<p>在我们谈论内存、进程、内核和其他内容时，你会经常看到状态（state）这个词。严格说来，一个状态就是一组特定排列的比特。</p>
+<p>一个进程动辄由几百万个比特值组成，因而使用抽象词汇来描述状态可能比使用比特值更简单一些。我们可以使用进程已经完成的任务或者当前正在执行的任务来描述其状态，如“进程正在等待用户输入”或者“进程正在执行启动任务的第二个阶段”。</p>
+<p>注意：我们通常使用抽象词汇而非比特值来描述状态，映像（image）这个词用来表示比特值在内存中的特定物理排列。</p>
+<h3 id="13-内核">1.3 内核</h3>
+<p>我们之所以介绍主内存和状态，是因为内核的几乎所有操作都和主内存相关。其中之一是将内存划分为很多区块，并且一直维护着这些区块的状态信息。每一个进程拥有自己的内存区块，且内核必须确保每个进程只使用它自己的内存区块。</p>
+<p><strong>内核管理以下四个方面：</strong></p>
+<ul>
+<li>进程：内核决定哪个进程可以使用CPU。</li>
+<li>内存：内核管理所有的内存，为进程分配内存，管理进程间的共享内存以及空闲内存。</li>
+<li>设备驱动程序：作为硬件系统（如磁盘）和进程之间的接口，内核负责操控硬件设备。</li>
+<li>系统调用和支持：进程通常使用系统调用和内核进行通信。</li>
+</ul>
+<h4 id="131-进程管理">1.3.1 进程管理</h4>
+<p>进程管理涉及进程的启动、暂停、恢复和终止。启动和终止进程比较直观，但是要解释清楚进程在执行过程中如何使用CPU则相对复杂一些。</p>
+<p><strong>并发执行：</strong>
+在现代操作系统中，很多进程貌似都是“同时”运行的。例如，你可以同时在桌面打开Web浏览器和电子表格应用程序。然而，虽然它们表面上看是同时运行，但实际上这些应用程序背后的进程并不完全是同时运行的。</p>
+<p><strong>上下文切换：</strong>
+我们设想一下，在只有一个CPU的计算机系统中，可能会有很多进程可以使用CPU，但是在任何一个特定的时间段内只能有一个进程可以使用CPU。所以实际上是多个进程轮流使用CPU，每个进程使用一段时间后就暂停，然后让另一个进程使用，依次轮流，时间单位是毫秒级。一个进程让出CPU使用权给另一个进程称为上下文切换（context switch）。</p>
+<p>进程在其时间段内有足够的时间完成主要的计算工作（实际上，进程通常在单个时间段内就能完成它的工作）。由于时间段非常短，短到我们根本察觉不到，所以在我们看来，系统是在同时运行多个进程（我们称之为多任务执行）。</p>
+<p><strong>上下文切换过程：</strong>
+内核负责上下文切换。我们来看看下面的场景，以便理解它的工作原理。</p>
+<ul>
+<li>CPU为每个进程计时，到时即停止进程(@中断)，并切换至内核模式(@执行内核代码)，由内核接管CPU控制权。</li>
+<li>内核记录下当前CPU和内存的状态信息，这些信息在恢复被停止的进程时需要用到。</li>
+<li><strong>内核执行上一个时间段内的任务(&amp;?)</strong>（如从输入输出设备获得数据，磁盘读写操作等）。</li>
+<li>内核准备执行下一个进程，从准备就绪的进程中选择一个执行(@就绪队列选择下一个进程)。</li>
+<li>内核为新进程准备CPU和内存(@分配资源)。</li>
+<li>内核将新进程执行的时间段通知CPU。</li>
+<li>内核将CPU切换至用户模式，将CPU控制权移交给新进程。</li>
+</ul>
+<p>上下文切换回答了一个十分重要的问题，即内核是在什么时候运行的。
+答案就是，内核是在上下文切换时的时间段间隙中运行的。</p>
+<p>在多CPU系统中，情况要稍微复杂一些。如果新进程将在另一个CPU上运行，内核就不需要让出当前CPU的使用权。不过为了将所有CPU的使用效率最大化，内核会使用一些其他的方式来获取CPU控制权。</p>
+<h4 id="132-内存管理">1.3.2 内存管理</h4>
+<p>内核在上下文切换过程中管理内存，这是一项十分复杂的工作，因为内核要保证以下所有条件：</p>
+<ul>
+<li>内核需要自己的专有内存空间，其他的用户进程无法访问；(@内核空间)</li>
+<li>每个用户进程有自己的专有内存空间；(进程内存独立)</li>
+<li>一个进程不能访问另一个进程的专有内存空间；</li>
+<li>用户进程之间可以共享内存；(共享内存区)</li>
+<li>用户进程的某些内存空间可以是只读的</li>
+<li>通过使用磁盘交换，系统可以使用比实际内存容量更多的内存空间。(虚拟内存)</li>
+</ul>
+<p><strong>内存地址映射</strong>
+新型的CPU提供了MMU（Memory Management Unit，内存管理单元），MMU使用了一种叫作虚拟内存的内存访问机制，即进程不是直接访问内存的实际物理地址，而是通过内核使得进程看起来可以使用整个系统的内存。
+当进程访问内存的时候，MMU截获访问请求，然后通过内存映射表将要访问的内存地址转换为实际的物理地址。内核需要初始化、维护和更新这个地址映射表。例如，在上下文切换时，内核将内存映射表从被移出进程转给被移入进程使用。</p>
+<p>注：内存地址映射通过内存页面表（page table）来实现。</p>
+<h4 id="133-设备驱动程序和设备管理">1.3.3 设备驱动程序和设备管理</h4>
+<p>通常设备只能在内核模式中被访问（例如用户进程请求内核关闭系统电源），因为设备访问不当有可能会让系统崩溃。另一个原因是不同设备之间没有一个统一的编程接口，即使同类设备也如此，比如两个不同的网卡。
+所以设备驱动程序传统意义上来说是内核的一部分，它们尽可能为用户进程提供统一的接口，以简化开发人员的工作。</p>
+<h4 id="134-系统调用和系统支持">1.3.4 系统调用和系统支持</h4>
+<p><strong>系统调用</strong>
+内核还对用户进程提供其他功能。例如，系统调用（system call或syscall）为进程执行一些它们不擅长或无法完成的工作。打开、读取和写文件这些操作都涉及系统调用。</p>
+<ul>
+<li>fork()：当进程调用fork()时，内核创建一个和该进程几乎一模一样的副本。</li>
+<li>exec()：当进程调用exec(program)时，内核启动program来替换当前的进程。</li>
+</ul>
+<p>除了init（参见第6章）以外，Linux中的所有用户进程都是通过fork()来启动的。
+除了创建现有进程的副本外，大多数情况下你还可以使用exec()来启动新的进程。</p>
+<p>一个简单的例子是你在命令行运行ls命令来显示目录内容。当你在终端窗口中输入ls时，终端窗口中的shell调用fork()创建一个shell的副本，然后该副本调用exec(ls)来运行ls。流程如图1-2
+<img src="file:///f:\Windows NEW\My_notes\My_notes\Linux\精通Linux\images\APi-2025-03-08-10-20-16.png" alt="">
+<strong>系统支持</strong>
+除了传统的系统调用，内核还为用户进程提供其他很多功能，最为常见的是虚拟设备。
+虚拟设备对于用户进程而言是物理设备，但其实它们都是通过软件实现的。
+因此从技术角度来说，它们并不需要存在于内核中，但是实际上它们很多都存在于内核中。例如：内核的随机数生成器（/dev/random）这样的虚拟设备，如果由用户进程来实现，难度要大很多。</p>
+<h3 id="14-用户空间">1.4 用户空间</h3>
+<p>内核分配给用户进程的内存我们称之为用户空间。
+<span style="color:red">因为一个进程简单说就是内存中的一个状态。</span>
+用户空间也可以指所有用户进程占用的所有内存。(用户空间还有一个不太正式的名称，叫userland。)</p>
+<p><strong>用户进程交互示例：</strong>
+Linux中大部分的操作都发生在用户空间中。
+虽然从内核的角度来说所有进程都是一样的，但是实际上它们执行的是不同的任务。
+相对于系统组件，用户进程位于一个基础服务层中。
+图1-3就展示了一组组件在Linux系统中是如何交互工作的。其中最底层是基础服务层，工具服务在中间，用户使用的应用程序在最上层。图1-3是一个简化版本，你可以看到顶层距离用户最近（如用户接口和Web浏览器）。中间一层中有邮件服务器这样的组件供Web浏览器使用。最下层是一些更小的服务组件。
+<img src="file:///f:\Windows NEW\My_notes\My_notes\Linux\精通Linux\images\APi-2025-03-08-10-30-31.png" alt=""></p>
+<p>最下层通常是由一些小的组件组成，它们比较精巧，专注完成某一个特定功能。
+中间层的组件比较大一些，如邮件、打印和数据库服务。
+顶层组件完成用户交互和复杂的功能。
+组件之间也可以相互调用。
+如果组件A调用了组件B的功能，我们可以视为组件A和B在同一层级，或者B在A之下。（下层为上层提供接口服务）</p>
+<p>图1-3只是一个粗略图，实际上用户空间里没有很明显的界限。例如许多应用程序和服务会将系统诊断信息写入日志，大部分程序使用标准的系统日志服务来完成，但也有一些程序是自己实现日志功能。</p>
+<p>此外，很多用户空间组件比较难分类，像Web服务器和数据库服务器这样的服务组件，你可以认为它们在图1-3中属于高级别组件，因为它们复杂度很高。然而用户应用程序也会经常调用它们的功能，所以你也可以将它们归入中级别组件</p>
+<h3 id="15-用户">1.5 用户</h3>
+<p>一个用户代表一个实体，它有权限运行用户进程，对文件拥有所有权。每个用户都有一个用户名，如billyjoe。然而内核是通过用户ID来管理用户的，用户ID是一串数字标识（详见第7章）。</p>
+<p><strong>普通用户与权限管理</strong>
+用户机制主要用于权限管理。每一个用户进程都有一个用户作为所有者，我们称其为以该用户运行的进程。在一定限制条件下，用户可以终止和改变他的进程的行为。但是对其他用户的进程无权干预。此外，用户可以决定是否将属于自己的文件和其他用户共享。
+<strong>超级用户root</strong>
+Linux操作系统的用户包括系统自带用户和供人使用的用户。详情见第3章。其中最关键的用户是root用户（意思是根用户或超级用户）。root用户不受前面提到的种种权限的限制，它可以终止其他用户的进程，读取系统中的任何文件。因此root也被称作超级用户。Unix的系统管理员拥有超级用户权限。
+注：root用户虽然权限很高，但是还是在用户模式而非内核模式中运行。</p>
+<p>用户组是指一组用户的集合。用户组的主要作用是允许一个用户同组内的其他用户共享文件权限。</p>
+<h3 id="16-前瞻">1.6 前瞻</h3>
+<p>至此我们对Linux系统的组成有了一个大致的了解。
+用户和用户进程交互，内核管理进程和硬件系统。内核和进程都在内存中运行。
+这些基础知识固然很重要，但如果想要了解更多的细节，你需要实际操作一番。</p>
+<h2 id="第二章-基础命令和目录结构">第二章 基础命令和目录结构</h2>
+<h3 id="21-bourne-shellbinsh">2.1 Bourne shell：/bin/sh</h3>
+<p><strong>shell介绍</strong>
+shell意思为命令行界面，是Unix操作系统中最为重要的部分之一。
+shell是运行命令行的应用程序，而命令行就是用户输入的那些命令。同时它为Unix程序员提供了一个小的编程环境，在这里Unix程序员可以将通用的任务分解为一些小的组件，然后使用shell来管理和组织它们。</p>
+<p>Unix操作系统中很多重要的部分其实都是shell脚本，它们是包含一系列shell命令的文本文件。如果你用过MS-DOS，你可以将shell脚本理解为功能强大的.bat批处理文件。我们将在第11章详细介绍shell脚本。</p>
+<p><strong>bash</strong>
+Unix的shell有很多种，它们都是基于Bourne shell（/bin/sh）这个贝尔实验室开发的标准shell，在早期的Unix系统上运行。所有基于Unix的操作系统都需要Bourne shell才能正常工作。</p>
+<p>Linux使用了一个增强版本的Bourne shell，我们称之为bash或者“Bourne-again” shell。大部分Linux系统的默认shell是bash，其通常有一个符号链接/bin/sh。你需要使用bash来运行本书中的例子。</p>
+<p>注意：你的Unix系统管理员为你设置的默认shell可能不是bash，你可以使用chsh命令来更改，或者请管理员为你更改。</p>
+<h3 id="22-shell使用">2.2 shell使用</h3>
+<p>安装Linux时，除了默认的root账号外，你还需要为自己创建至少一个普通用户账号，这些账号将会是你的个人账号。本章中你需要使用普通用户账号。</p>
+<h4 id="221-shell窗口">2.2.1 shell窗口</h4>
+<p>登录系统后，打开一个shell窗口（也叫作终端窗口）。
+打开shell窗口最简单的方法是，在Gnome或者Ubuntu Unity这样的图形用户界面（Graphical User Interface，以下简称GUI）中运行终端程序，这样就可以在新的窗口中启动shell。
+通常在窗口的顶端你能看到一个$提示符。在Ubuntu上，提示符是这样：name@host:path$（用户名@主机名:路径$）。在Fedora上，提示符是这样：[name@host path] $。
+shell窗口类似Windows上的DOS，OS X系统上的终端程序本质上和Linux中的shell窗口一样。</p>
+
+            <script async src="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.js"></script>
+            
+        </body>
+        </html>
