@@ -1601,3 +1601,531 @@ int main() {
     auto square = [](double x) -> double { return x * x; };
 }
 ```
+
+## 十四、C++ 数字
+
+### 14.1 C++定义数字
+
+```c++
+#include <iostream>
+using namespace std;
+ 
+int main ()
+{
+   // 数字定义
+   short  s;
+   int    i;
+   long   l;
+   float  f;
+   double d;
+   
+   // 数字赋值
+   s = 10;      
+   i = 1000;    
+   l = 1000000; 
+   f = 230.47;  
+   d = 30949.374;
+   
+   // 数字输出
+   cout << "short  s :" << s << endl;
+   cout << "int    i :" << i << endl;
+   cout << "long   l :" << l << endl;
+   cout << "float  f :" << f << endl;
+   cout << "double d :" << d << endl;
+ 
+   return 0;
+}
+```
+
+### 14.2 C++数字运算
+
+在 C++ 中，除了可以创建各种函数，还包含了各种有用的函数供您使用。这些函数写在标准 C 和 C++ 库中，叫做内置函数。您可以在程序中引用这些函数。
+
+C++ 内置了丰富的数学函数，可对各种数字进行运算。下表列出了 C++ 中一些有用的内置的数学函数。
+
+为了利用这些函数，您需要引用数学头文件 `<cmath>`
+
+![](images/APi-2025-04-07-10-14-26.png)
+![](images/APi-2025-04-07-10-14-40.png)
+
+```c++
+#include <iostream>
+#include <cmath>
+using namespace std;
+ 
+int main ()
+{
+   // 数字定义
+   short  s = 10;
+   int    i = -1000;
+   long   l = 100000;
+   float  f = 230.47;
+   double d = 200.374;
+ 
+   // 数学运算
+   cout << "sin(d) :" << sin(d) << endl;
+   cout << "abs(i)  :" << abs(i) << endl;
+   cout << "floor(d) :" << floor(d) << endl;
+   cout << "sqrt(f) :" << sqrt(f) << endl;
+   cout << "pow( d, 2) :" << pow(d, 2) << endl;
+ 
+   return 0;
+}
+```
+
+### 14.3 C++随机数
+
+关于随机数生成器，有两个相关的函数。一个是 rand()，该函数只返回一个伪随机数。生成随机数之前必须先调用 srand() 函数。
+
+下面是一个关于生成随机数的简单实例。实例中使用了 time() 函数来获取系统时间的秒数，通过调用 rand() 函数来生成随机数：
+
+srand(time(0)); // 设置随机数种子
+int random_num = rand() % 100; // 生成 0 到 99 的随机数
+
+```c++
+#include <iostream>
+#include <ctime>
+#include <cstdlib>
+ 
+using namespace std;
+ 
+int main ()
+{
+   int i,j;
+ 
+   // 设置种子
+   srand( (unsigned)time( NULL ) );
+ 
+   /* 生成 10 个随机数 */
+   for( i = 0; i < 10; i++ )
+   {
+      // 生成实际的随机数
+      j= rand();
+      cout <<"随机数： " << j << endl;
+   }
+ 
+   return 0;
+}
+```
+
+### 14.4 C++数学常数
+
+在 C++ 中，数学常数（如 π、e、黄金比例等）是许多算法和应用中不可或缺的部分，虽然早期版本的 C++ 中没有直接提供这些常数，但从 C++20 开始，标准库引入了几个常用的数学常数，并提供了更高效和统一的方式来访问它们。
+
+**π**
+常量：std::numbers::pi
+类型：std::float32_t（32位浮动）、std::float64_t（64位浮动）
+
+```c++
+#include <cmath>
+#include <numbers>
+#include <iostream>
+
+int main() {
+    std::cout << "pi: " << std::numbers::pi << std::endl;
+}
+```
+
+**e**
+常量：std::numbers::e
+类型：std::float32_t（32位浮动）、std::float64_t（64位浮动）
+
+```c++
+std::cout << "e: " << std::numbers::e << std::endl;
+```
+
+**黄金比例**
+常量：std::numbers::phi
+类型：std::float32_t（32位浮动）、std::float64_t（64位浮动）
+
+```c++
+std::cout << "phi: " << std::numbers::phi << std::endl;
+```
+
+如果你希望使用32位浮点数，可以写成 std::numbers::phi_v<float>。
+如果你想使用64位浮点数，可以写成 std::numbers::phi_v<double>。
+
+直接使用std::numbers::pi、std::numbers::e、std::numbers::phi，编译器可以自动推导。
+
+可以使用decltype来获取变量确切类型，decltype关键字可以获取表达式或者变量的类型用于再定义。
+```c++
+int a = 42;
+double c = 3.14;
+decltype(a + c) d = a + c; // d 的类型是 double，因为 int + double 的结果是 double
+```
+
+可以使用typeid来获取变量的类型。
+```c++
+auto phi_single = std::numbers::phi_v<float>;
+auto phi_double = std::numbers::phi_v<double>;
+std::cout << "Type of phi_single: " << typeid(phi_single).name() << std::endl;
+std::cout << "Type of phi_double: " << typeid(phi_double).name() << std::endl;
+```
+
+注意，`<numbers>`是C++20引入的新头文件
+
+### 14.5 C++标准
+
+![](images/APi-2025-04-07-10-48-15.png)
+
+在初学 C++ 时，经常听到 C++11，C++14，g++，msvc 等术语，它们之间既有关系，又是指代不同的东西，下面就来简单介绍一些这些术语之间的关系
+
+#### 14.5.1 C++标准
+
+C++ 标准就是 C++ 这门语言的规范和规范化的文件，它是有 ISO 这个标准化组织来制定的。所谓 C++ 标准简单可以理解为 C++ 这门语言的语法，语义，函数库等等，就好像我们说的普通话一样，是一种标准
+
+#### 14.5.2 C++常见标准
+
+C++ 标准主要有 C++98，C++11，C++14，C++17，C++20 以及 C++23。这里的 11,14，… 分别是指 2011,2014 年发布的，而 98 是指 1998 年发布的标准版本，每一次的标准变更都伴随着对 C++ 这门语言引入了比较大的更新（新增，废弃）。
+
+![](images/APi-2025-04-07-10-51-28.png)
+
+查看C++标准：
+```C++
+#include <iostream>
+using namespace std;
+
+int main()
+{
+    cout << __cplusplus << endl; // 假设我的 C++ 版本是 199711，对比下面的参数是 C++98
+}
+```
+
+```C++
+C++ pre-C++98: __cplusplus is 1.
+C++98: __cplusplus is 199711L.
+C++98 + TR1: This reads as C++98 and there is no way to check that I know of.
+C++11: __cplusplus is 201103L.
+C++14: __cplusplus is 201402L.
+C++17: __cplusplus is 201703L.
+C++20: __cplusplus is 202002L.
+```
+
+自行测试：
+![](images/APi-2025-04-07-10-54-07.png)
+我的编译器标准为C++14
+
+__cplusplus 是预处理器宏。如果编译单元是使用 C++ 编译器编译的，则定义 __cplusplus 预处理器宏。它的值对应于编译器用来编译编译单元的 C++ 标准。
+
+在编译时，使用下面的命令行语句，可以指定 C++ 标准：
+g++ -std=c++11 "example.cpp" -o "example.exe"，比如我这里就指定了 C++11 为使用的标准
+
+#### 14.5.3 C++编译器
+
+正如前面所讲 C++ 的标准是指这门语言的语法，语义和函数库，它类比于我们说的普通话，而编译器则是将 C++ 这门高级语言翻译成机器语言的工具，机器语言就是给你的计算机看的语言，最终就是 0101 这样的二进制数
+
+目前市面上有很多的编译器，如本文开头的图片所示，其中最流行的分别是 GUN 项目下的 g++ 编译器和微软的 MSVC 编译器（Microsoft Visual C++）。在下面的介绍中，我们也着重介绍如何查看这两种编译器的版本
+
+那么 C++ 标准和编译器版本是什么关系呢？编译器本质上也可以理解为对 C++ 标准的实现。打一个比方，比如有一个当下的词汇叫做人工智能，你大脑这个现代词语编译器就能听懂人工智能，但如果你让一个秦朝人来听，那么他大脑里的词语编译器就无法理解人工智能是什么意思
+
+**查看gcc g++版本：**
+
+gcc 是 c 语言的编译器，g++ 全称是 gcc ++，是 C++ 的编译器，当然 g++ 只是一种 C++ 的编译器。而 gcc 和 g++ 这两款编译器都属于 GCC（GNU Compiler Collection）这个项目下的产品
+
+这个比较简单，就是在命令行（如 Linux 下的终端或 Windows 下的 cmd）中输入，gcc -v 和 g++ -v 即可查看。很多 Linux 发行版都默认安装了 g++，例如 Ubuntu，而 Windows 往往没有默认安装 g++，因此若你需要在 Windows 下使用，需要自行安装
+
+![](images/APi-2025-04-07-10-58-05.png)
+
+可见我的gcc版本为8.1.0
+
+注意也可以使用gcc --version直接查看
+**g++与C++版本的关系**
+
+C++17：GCC7 完全支持，GCC6 和 GCC5 部分支持，GCC6 支持度当然比 GCC5 高，GCC4 及以下版本不支持
+C++14：GCC5 就可以完全支持，GCC4 部分支持，GCC3 及以下版本不支持
+C++11：GCC4.8.1 及以上可以完全支持。GCC4.3 部分支持，GCC4.3 以下版本不支持
+
+详情见[官方文档](https://gcc.gnu.org/projects/cxx-status.html)
+
+![](images/APi-2025-04-07-11-07-21.png)
+![](images/APi-2025-04-07-11-08-59.png)
+
+**Visual Studio 版本与 C++ 标准的关系**
+
+1. Visual studio 是微软的一款集成开发环境的工具（不是 Visual Studio Code），如可以开发 C++ 程序，C# 程序，JavaScript 程序等
+2. Visual C++ 是微软的一款 C++ 集成开发环境的工具，里面集成了 C++ 的编译器，比如大家熟悉的 Visual C++6.0。而现在的 Visual Studio 中集成了 Visual C++，简称 MSVC
+3. 微软对它的 C++ 语言进行了扩充，所以我们会看到有时 Windows 下的 C++ 写法同其它平台的 C++ 有不同
+
+由于 Visual C++ 这个编译器与 Visual Studio 是强相关的，因此一般情况下，我们知道 Visual Studio 的版本就知道了它所支持的 C++ 标准
+
+C++20：vs2022支持
+C++17：vs2017基本支持，vs2015部分支持
+C++14：vs2017就可以完全支持，vs2015基本支持，vs2013部分支持
+C++11：vs2015及以上可以完全支持。vs2013基本支持，vs2012部分支持，vs2010及以下版本不支持
+
+### 14.6 命名空间
+
+在C++中，命名空间（Namespace） 是用于组织代码、避免名称冲突的重要机制。以下是关于命名空间的详细说明：
+
+命名空间的作用：
+
+- 避免命名冲突
+当不同库或模块中存在相同名称的类、函数或变量时，命名空间可以将其隔离，防止重复定义错误。
+
+- 代码逻辑分组
+将相关代码归类到同一命名空间中，提高可读性和可维护性。
+
+基本使用：
+
+定义命名空间：
+```c++
+namespace MyNamespace {
+    int value = 42;
+    void print() {
+        std::cout << "Hello from MyNamespace!" << std::endl;
+    }
+}
+//命名空间中可以包含多个变量，函数，类
+``` 
+
+访问命名空间成员
+
+直接通过作用域符号
+```c++
+MyNamespace::value = 10;
+MyNamespace::print();
+```
+
+使用using声明
+```c++
+using MyNamespace::value;
+value = 20;  // 直接访问
+```
+
+使用using namespace声明 引入整个命名空间（慎用，可能导致污染）：
+```c++
+using namespace MyNamespace;
+print();      // 直接调用函数
+```
+
+关键特性：
+
+1. 嵌套命名空间
+```c++
+namespace A::B::C {
+    void func() { ... }
+}
+// 等价于：
+namespace A { namespace B { namespace C { ... }}}
+```
+
+2. 匿名命令空间
+未命名的命名空间中的内容仅在当前文件内可见（类似static）：
+
+```c++
+namespace {
+    int internalVar;  // 仅在当前.cpp文件中可访问
+}
+```
+
+3. 命名空间别名
+
+```C++
+namespace a_very_long_name { ... }
+namespace shortname = a_very_long_name;
+```
+
+4. 开放性
+同一命名空间可分散定义在不同文件中：
+
+```c++
+// file1.cpp
+namespace MyLib { void func1() {} }
+
+// file2.cpp
+namespace MyLib { void func2() {} }
+// 最终 MyLib 包含 func1 和 func2
+```
+
+总结：命名空间是 C++ 语言的一个重要特性，它可以有效地组织代码，避免命名冲突，提高代码可读性和可维护性。
+
+![](images/APi-2025-04-07-15-19-03.png)
+匿名命名空间只在本文件有效。
+
+## 十五、C++数组
+
+所有的数组都是由连续的内存位置组成。最低的地址对应第一个元素，最高的地址对应最后一个元素。
+
+### 15.1 声明数组
+
+在 C++ 中要声明一个数组，需要指定元素的类型和元素的数量。
+
+```C++
+double balance[10];
+```
+
+### 15.2 初始化数组
+
+在 C++ 中，您可以逐个初始化数组，也可以使用一个初始化语句，如下所示：
+```C++
+double balance[5] = {1000.0, 2.0, 3.4, 7.0, 50.0};
+```
+大括号 { } 之间的值的数目不能大于我们在数组声明时在方括号 [ ] 中指定的元素数目。
+
+如果您省略掉了数组的大小，数组的大小则为初始化时元素的个数。因此，如果：
+```C++
+double balance[] = {1000.0, 2.0, 3.4, 7.0, 50.0};
+```
+balance 的大小为 5。
+
+下面是一个为数组中某个元素赋值的实例：
+
+```C++
+balance[4] = 50.0;
+```
+![](images/APi-2025-04-07-15-49-33.png)
+
+### 15.3 访问数组元素
+
+数组元素可以通过数组名称加索引进行访问。元素的索引是放在方括号内，跟在数组名称的后边。
+
+```C++
+#include <iostream>
+using namespace std;
+ 
+#include <iomanip>
+using std::setw;
+ 
+int main ()
+{
+   int n[ 10 ]; // n 是一个包含 10 个整数的数组
+ 
+   // 初始化数组元素          
+   for ( int i = 0; i < 10; i++ )
+   {
+      n[ i ] = i + 100; // 设置元素 i 为 i + 100
+   }
+   cout << "Element" << setw( 13 ) << "Value" << endl;
+ 
+   // 输出数组中每个元素的值                     
+   for ( int j = 0; j < 10; j++ )
+   {
+      cout << setw( 7 )<< j << setw( 13 ) << n[ j ] << endl;
+   }
+ 
+   return 0;
+}
+```
+
+上面的程序使用了 setw() 函数 来格式化输出。当上面的代码被编译和执行时，它会产生下列结果：
+
+![](images/APi-2025-04-07-15-51-36.png)
+
+C++ setw() 函数用于设置字段的宽度，语法格式如下：
+
+`setw(n)`
+n 表示宽度，用数字表示。
+
+setw() 函数只对紧接着的输出产生作用。
+
+### 15.4 数组介绍
+
+#### 15.4.1 多维数组
+
+#### 15.4.2 指向数组的指针
+
+#### 15.4.3 传递数组给函数
+
+#### 15.4.4 从函数返回数组
+
+
+## 十六、C++字符串
+
+C++ 提供了以下两种类型的字符串表示形式：
+
+C 风格字符串
+C++ 引入的 string 类类型
+
+### 16.1 C 风格字符串 
+
+C 风格的字符串起源于 C 语言，并在 C++ 中继续得到支持。字符串实际上是使用 null 字符 \0 终止的一维字符数组。因此，一个以 null 结尾的字符串，包含了组成字符串的字符。
+
+下面的声明和初始化创建了一个 RUNOOB 字符串。由于在数组的末尾存储了空字符，所以字符数组的大小比单词 RUNOOB 的字符数多一个。
+
+```C++
+char site[7] = {'R', 'U', 'N', 'O', 'O', 'B', '\0'};
+```
+依据数组初始化规则，您可以把上面的语句写成以下语句：
+
+```C++
+char site[] = "RUNOOB";
+```
+
+内存表示：
+![](images/APi-2025-04-07-15-56-14.png)
+
+其实，您不需要把 null 字符放在字符串常量的末尾。C++ 编译器会在初始化数组时，自动把 \0 放在字符串的末尾。
+
+注意：此种字符数组类型的字符串空间申请在栈区。
+指针型字符串，字符串常量会申请在常量区，需要const修饰。
+`const char* p = "RUNOOB";`
+即使字符串申请在常量区，其仍以\0结尾。
+
+C++ 中有大量的函数用来操作以 null 结尾的字符串:
+![](images/APi-2025-04-07-15-58-43.png)
+
+示例：
+```C++
+#include <iostream>
+#include <cstring>
+ 
+using namespace std;
+ 
+int main ()
+{
+   char str1[13] = "runoob";
+   char str2[13] = "google";
+   char str3[13];
+   int  len ;
+ 
+   // 复制 str1 到 str3
+   strcpy( str3, str1);
+   cout << "strcpy( str3, str1) : " << str3 << endl;
+ 
+   // 连接 str1 和 str2
+   strcat( str1, str2);
+   cout << "strcat( str1, str2): " << str1 << endl;
+ 
+   // 连接后，str1 的总长度
+   len = strlen(str1);
+   cout << "strlen(str1) : " << len << endl;
+ 
+   return 0;
+}
+```
+
+### 16.2 C++ 字符串类
+
+C++ 标准库提供了 string 类类型，支持上述所有的操作，另外还增加了其他更多的功能。我们将学习 C++ 标准库中的这个类，现在让我们先来看看下面这个实例：
+
+```C++
+#include <iostream>
+#include <string>
+ 
+using namespace std;
+ 
+int main ()
+{
+   string str1 = "runoob";
+   string str2 = "google";
+   string str3;
+   int  len ;
+ 
+   // 复制 str1 到 str3
+   str3 = str1;
+   cout << "str3 : " << str3 << endl;
+ 
+   // 连接 str1 和 str2
+   str3 = str1 + str2;
+   cout << "str1 + str2 : " << str3 << endl;
+ 
+   // 连接后，str3 的总长度
+   len = str3.size();
+   cout << "str3.size() :  " << len << endl;
+ 
+   return 0;
+}
+``` 
+![](images/APi-2025-04-07-16-00-34.png)
+
+注意：String类的字符串不以'\0'结尾。
